@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include "window.hpp"
 #include "shader.hpp"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
 
 struct camera_t
 {
@@ -65,6 +67,37 @@ int main()
 	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
 	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 
+	GLuint skybox;
+	glGenTextures(1, &skybox);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, skybox);
+	static const char *const skybox_paths[6] = {
+		"res/sky_right.png",
+		"res/sky_left.png",
+		"res/sky_top.png",
+		"res/sky_bottom.png",
+		"res/sky_back.png",
+		"res/sky_front.png",
+	};
+	for (size_t i = 0; i < std::size(skybox_paths); ++i) {
+		int face_width, face_height, face_channels;
+		auto face = stbi_load(skybox_paths[i], &face_width, &face_height, &face_channels, 0);
+		assert(face);
+		static const GLenum formats[] = {
+			GL_RED, GL_RG, GL_RGB, GL_RGBA,
+		};
+		assert(0 <= face_channels && face_channels <= std::size(formats));
+		const auto format = formats[face_channels-1];
+		glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
+			0, format, face_width, face_height, 0, format, GL_UNSIGNED_BYTE, face);
+		stbi_image_free(face);
+	}
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
 	struct
 	{
 		glm::vec3 cam_right;
@@ -87,6 +120,8 @@ int main()
 	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_STATIC_DRAW);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
+	glUseProgram(compute_shdr);
+	glUniform1i(2 /* skybox */, 1 /* GL_TEXTURE1 */);
 	glUseProgram(graphics_shdr);
 	glUniform1i(0 /* graphics binding for screen */, 0 /* GL_TEXTURE0 */);
 

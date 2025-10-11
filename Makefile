@@ -41,7 +41,7 @@ bin/%.cpp.o: src/%.cpp
 	$(CXX) $(CPPFLAGS) -c -o $@ $< $(CXXFLAGS)
 
 bin/%.h.gch: inc/%.h
-	$(CC) $(CPPFLAGS) -c -o $@ $< $(CFLAGS)
+	$(CXX) $(CPPFLAGS) -c -o $@ $< $(CFLAGS)
 
 bin/%.hpp.gch: inc/%.hpp
 	$(CXX) $(CPPFLAGS) -c -o $@ $< $(CXXFLAGS)

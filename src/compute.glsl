@@ -10,6 +10,7 @@ layout(std430,binding=1) readonly restrict buffer scene
 	float focal_length;
 	vec3 cam_pos;
 };
+uniform layout(location=2) samplerCube skybox;
 
 const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
 const vec3 sphere_pos = vec3(0.5, 0.0, -1.0);
@@ -29,9 +30,9 @@ vec4 color(ivec2 coord)
 		vec3 normal = (1.0 / sphere_r) * (collision - sphere_pos);
 		vec3 incident = normalize(light_pos - collision);
 		float diffuse = dot(normal, incident);
-		return diffuse * vec4(0.8, 0.4, 0.3, 0.0) + vec4(0.1, 0.1, 0.1, 1.0);
+		return diffuse * texture(skybox, normal);
 	} else {
-		return vec4(0.0);
+		return texture(skybox, ray);
 	}
 }
 
