@@ -53,7 +53,7 @@ int main()
 	delete[] vertex_src;
 	delete[] fragment_src;
 	camera_t camera{
-		0.78f, float(width), float(height),
+		1.05f, float(width), float(height),
 		{ 0.0f, 0.0f, 1.0f },
 		{ 0.0f, 0.0f,-1.0f },
 	};
