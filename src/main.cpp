@@ -13,6 +13,7 @@ enum shader {
 static const char *source[] = {
 R"(
 #version 430 core
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 uniform layout(binding=0,rgba8ui) writeonly restrict uimage2D screen;
 void main()
 {
@@ -46,7 +47,17 @@ int main()
 		{ 0.0f, 0.0f, 1.0f },
 		{ 0.0f, 0.0f,-1.0f },
 	};
+
+	GLuint texture;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, width, height);
+	glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8UI);
+
+	glUseProgram(compute_shdr);
+
 	while (win) {
+		glDispatchCompute(width, height, 1);
 		win.draw();
 	}
 }
