@@ -65,11 +65,21 @@ int main()
 	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
 	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 
-	struct ssb_t
+	struct
 	{
-		float screen_width;
+		glm::vec3 cam_right;
+		float inv_screen_width;
+		glm::vec3 cam_up;
+		float focal_length;
+		glm::vec3 cam_pos;
+		float __padding;
 	} data;
-	data.screen_width = camera.width;
+	const glm::vec3 y{0.0f, 1.0f, 0.0f};
+	data.cam_right = glm::normalize(glm::cross(camera.direction, y));
+	data.cam_up = glm::cross(data.cam_right, camera.direction);
+	data.cam_pos = camera.position;
+	data.inv_screen_width = 1.0f / camera.width;
+	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
 
 	GLuint ssb;
 	glGenBuffers(1, &ssb);
