@@ -11,7 +11,7 @@ const float sphere_r = 0.5;
 
 vec4 color(ivec2 coord)
 {
-	vec2 pixel = vec2((coord.x - 400) / 800.0, (coord.y - 300) / 600.0);
+	vec2 pixel = vec2((coord.x - 400) / 800.0, (coord.y - 400) / 800.0);
 	const vec3 z = vec3(0.0, 0.0, 1.0);
 	// if fov = pi/3, focal length = root(3)/2 = 0.866
 	vec3 ray = normalize(-0.866 * z + vec3(pixel, 0.0));
