@@ -14,7 +14,7 @@ static const char *source[] = {
 R"(
 #version 430 core
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-uniform layout(binding=0,r32f) image2D screen;
+uniform layout(binding=0,r32f) writeonly restrict image2D screen;
 void main()
 {
 	ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
@@ -99,9 +99,8 @@ int main()
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	// glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, width, height);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
-	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32F);
+	glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, width, height);
+	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
 
 	const auto va = describe_va();
 
