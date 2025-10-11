@@ -65,6 +65,18 @@ int main()
 	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
 	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 
+	struct ssb_t
+	{
+		float screen_width;
+	} data;
+	data.screen_width = camera.width;
+
+	GLuint ssb;
+	glGenBuffers(1, &ssb);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssb);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_STATIC_DRAW);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
+
 	glUseProgram(graphics_shdr);
 	glUniform1i(0 /* graphics binding for screen */, 0 /* GL_TEXTURE0 */);
 
