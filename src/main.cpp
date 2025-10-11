@@ -14,11 +14,11 @@ static const char *source[] = {
 R"(
 #version 430 core
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-uniform layout(binding=0,r32f) writeonly restrict image2D screen;
+uniform layout(binding=0,rgba32f) writeonly restrict image2D screen;
 void main()
 {
 	ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-	imageStore(screen, coord, vec4(1.0, 0.0, 0.0, 0.0));
+	imageStore(screen, coord, vec4(1.0, 1.0, 0.0, 0.0));
 }
 )",
 
@@ -97,10 +97,11 @@ int main()
 	glGenTextures(1, &texture);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, width, height);
-	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R32F);
+	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
+	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+
+	glUseProgram(graphics_shdr);
+	glUniform1i(0 /* graphics binding for screen */, 0 /* GL_TEXTURE0 */);
 
 	const auto va = describe_va();
 
