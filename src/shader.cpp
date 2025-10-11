@@ -1,4 +1,5 @@
 #include <cassert>
+#include <fstream>
 #include <cstdlib>
 #include <cstdio>
 #include "shader.hpp"
@@ -63,3 +64,14 @@ GLuint build_shader(const char *comp_src)
 	return id;
 }
 
+char *load_file(const char *path)
+{
+	std::ifstream file(path);
+	file.seekg(0, std::ios_base::end);
+	const size_t size = file.tellg();
+	file.seekg(0, std::ios_base::beg);
+	auto buf = new char[size+1];
+	file.read(buf, size);
+	buf[size] = '\0';
+	return buf;
+}

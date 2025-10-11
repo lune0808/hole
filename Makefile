@@ -22,7 +22,7 @@ BIN_PATH = $(BIN:%=bin/%)
 HDR = $(shell find inc -type f)
 GCH = $(HDR:inc/%=bin/%.gch)
 
-SRC = $(shell find src -type f)
+SRC = $(shell find src -type f -regex ".*\.\(c\|cpp\)")
 SRC_NOMAIN = $(filter-out $(BIN:%=src/%.cpp),$(SRC))
 OBJ = $(SRC:src/%=bin/%.o)
 OBJ_NOMAIN = $(SRC_NOMAIN:src/%=bin/%.o)

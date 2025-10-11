@@ -4,47 +4,6 @@
 #include "window.hpp"
 #include "shader.hpp"
 
-enum shader {
-	compute,
-	vertex,
-	fragment,
-};
-
-static const char *source[] = {
-R"(
-#version 430 core
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-uniform layout(binding=0,rgba32f) writeonly restrict image2D screen;
-void main()
-{
-	ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-	imageStore(screen, coord, vec4(1.0, 1.0, 0.0, 0.0));
-}
-)",
-
-R"(
-#version 430 core
-in vec2 pos;
-out vec2 uv;
-void main()
-{
-	uv = 0.5 * pos + vec2(0.5, 0.5);
-	gl_Position = vec4(pos, 0.0, 1.0);
-}
-)",
-
-R"(
-#version 430 core
-uniform layout(binding=0) sampler2D screen;
-in vec2 uv;
-out vec4 f_color;
-void main()
-{
-	f_color = texture(screen, uv);
-}
-)",
-};
-
 struct camera_t
 {
 	float fov;
@@ -85,8 +44,14 @@ int main()
 	const int width = 800;
 	const int height = 600;
 	window win(width, height);
-	const auto compute_shdr = build_shader(source[shader::compute]);
-	const auto graphics_shdr = build_shader(source[shader::vertex], source[shader::fragment]);
+	auto compute_src = load_file("src/compute.glsl");
+	const auto compute_shdr = build_shader(compute_src);
+	delete[] compute_src;
+	auto vertex_src = load_file("src/vertex.glsl");
+	auto fragment_src = load_file("src/fragment.glsl");
+	const auto graphics_shdr = build_shader(vertex_src, fragment_src);
+	delete[] vertex_src;
+	delete[] fragment_src;
 	camera_t camera{
 		0.78f, float(width), float(height),
 		{ 0.0f, 0.0f, 1.0f },
