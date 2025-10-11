@@ -12,7 +12,7 @@ GLuint compile_shader(const char *src, GLenum kind)
 	int success;
 	glGetShaderiv(id, GL_COMPILE_STATUS, &success);
 	if (!success) {
-		GLchar buf[128];
+		GLchar buf[1024];
 		GLsizei len;
 		glGetShaderInfoLog(id, sizeof buf, &len, buf);
 		std::fprintf(stderr, "[gl compile error] %s\n", buf);
@@ -31,6 +31,16 @@ GLuint build_shader(const char *vert_src, const char *frag_src)
 	glLinkProgram(id);
 	glDeleteShader(vert);
 	glDeleteShader(frag);
+	return id;
+}
+
+GLuint build_shader(const char *comp_src)
+{
+	const auto id = glCreateProgram();
+	const auto comp = compile_shader(comp_src, GL_COMPUTE_SHADER);
+	glAttachShader(id, comp);
+	glLinkProgram(id);
+	glDeleteShader(comp);
 	return id;
 }
 
