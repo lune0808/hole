@@ -127,10 +127,10 @@ int main()
 
 	const auto va = describe_va();
 
+	glUseProgram(compute_shdr);
+	glDispatchCompute(width, height, 1);
+	glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 	while (win) {
-		glUseProgram(compute_shdr);
-		glDispatchCompute(width, height, 1);
-		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
 		glUseProgram(graphics_shdr);
 		glBindVertexArray(va);

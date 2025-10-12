@@ -16,24 +16,25 @@ const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
 const vec3 sphere_pos = vec3(0.5, 0.0, -1.0);
 const float sphere_r = 0.5;
 
+const float dl = 0.1;
+const uint iterations = 100;
+
 vec4 color(ivec2 coord)
 {
 	vec2 pixel = vec2(coord.x * inv_screen_width - 0.5, coord.y * inv_screen_width - 0.5);
 	// if fov = pi/3, focal length = root(3)/2 = 0.866, and camera faces -z
 	vec3 ray = normalize(vec3(pixel, -0.866));
-	vec3 diff = sphere_pos - cam_pos;
-	float proj = dot(ray, diff);
-	float discr = proj * proj - (dot(diff, diff) - sphere_r * sphere_r);
-	if (discr >= 0.0) {
-		float t = proj - sqrt(discr);
-		vec3 collision = cam_pos + t * ray;
-		vec3 normal = (1.0 / sphere_r) * (collision - sphere_pos);
-		vec3 incident = normalize(light_pos - collision);
-		float diffuse = dot(normal, incident);
-		return diffuse * texture(skybox, normal);
-	} else {
-		return texture(skybox, ray);
+	vec3 pos = cam_pos;
+	float hit = 0.0;
+	for (uint iter = 0; iter < iterations; iter++) {
+		vec3 diff = sphere_pos - pos;
+		if (dot(diff, diff) <= sphere_r*sphere_r) {
+			hit = 1.0;
+			break;
+		}
+		pos = pos + dl * ray;
 	}
+	return vec4(hit * vec3(0.3, 0.1, 0.03) + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
 }
 
 void main()
