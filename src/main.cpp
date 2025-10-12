@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstddef>
 #include <cassert>
 #include <glm/glm.hpp>
 #include "window.hpp"
@@ -117,7 +118,7 @@ int main()
 	GLuint ssb;
 	glGenBuffers(1, &ssb);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssb);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_STATIC_DRAW);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_DYNAMIC_DRAW);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
 	glUseProgram(compute_shdr);
@@ -127,10 +128,13 @@ int main()
 
 	const auto va = describe_va();
 
-	glUseProgram(compute_shdr);
-	glDispatchCompute(width, height, 1);
-	glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 	while (win) {
+		glUseProgram(compute_shdr);
+		data.cam_pos.x = std::sin(float(glfwGetTime()));
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+			offsetof(decltype(data), cam_pos), sizeof data.cam_pos, &data.cam_pos);
+		glDispatchCompute(width, height, 1);
+		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
 		glUseProgram(graphics_shdr);
 		glBindVertexArray(va);

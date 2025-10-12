@@ -14,7 +14,7 @@ uniform layout(location=2) samplerCube skybox;
 
 const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
 const vec3 sphere_pos = vec3(0.5, 0.0, -1.0);
-const float sphere_r = 0.5;
+const float sphere_r = 0.2;
 
 const float dl = 0.1;
 const uint iterations = 100;
@@ -32,6 +32,8 @@ vec4 color(ivec2 coord)
 			hit = 1.0;
 			break;
 		}
+		vec3 dr_over_dl = 0.007 / dot(diff, diff) * normalize(diff);
+		ray = normalize(ray + dl * dr_over_dl);
 		pos = pos + dl * ray;
 	}
 	return vec4(hit * vec3(0.3, 0.1, 0.03) + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
