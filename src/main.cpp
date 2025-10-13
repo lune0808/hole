@@ -116,7 +116,16 @@ int main()
 	data.inv_screen_width = 1.0f / camera.width;
 	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
 	data.sch_radius = 0.0f;
-	data.iterations = 128;
+	data.iterations = 1024;
+
+	glfwSetKeyCallback(win.handle, [](GLFWwindow *handle, int key, int, int action, int)
+	{
+		auto &data_ = *reinterpret_cast<decltype(data)*>(glfwGetWindowUserPointer(handle));
+		if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+			data_.iterations += 16;
+		}
+	});
+	glfwSetWindowUserPointer(win.handle, &data);
 
 	GLuint ssb;
 	glGenBuffers(1, &ssb);
