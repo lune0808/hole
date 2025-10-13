@@ -53,7 +53,7 @@ vec4 color(ivec2 coord)
 	// float sgn = sign(dot(ray, start_radial));
 	// float dr_dt = sgn * (sch_radius/r - 1.0) * sqrt(1.0 + b*b / (r*r) * (sch_radius/r - 1.0);
 	vec3 output_color = vec3(0.0);
-	const float dt = 1e-4;
+	const float dt = 5e-3;
 	float rmax = max(sch_radius, sphere_r);
 	for (uint iter = 0; iter < iterations; iter++) {
 		if (abs(r) < rmax) {
@@ -80,7 +80,7 @@ vec4 color(ivec2 coord)
 	// return vec4((normalize(ray)-start_ray), 1.0);
 	// return vec4(vec3(phi/1.57, phi/3.14, phi/6.28).rrr, 1.0);
 	// return vec4(output_color, 1.0);
-	// return vec4(vec3(hit), 1.0);
+	return vec4(vec3(hit), 1.0);
 	// return vec4(vec3(0.0, 1.0-d, d), 1.0);
 	return vec4(hit * output_color + (1.0-hit) * vec3(0.0, 1.0-d, d), 1.0);
 	// return vec4(hit * output_color + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
