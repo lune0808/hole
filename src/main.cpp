@@ -77,8 +77,8 @@ int main()
 		"res/sky_left.png",
 		"res/sky_top.png",
 		"res/sky_bottom.png",
-		"res/sky_back.png",
 		"res/sky_front.png",
+		"res/sky_back.png",
 	};
 	for (size_t i = 0; i < std::size(skybox_paths); ++i) {
 		int face_width, face_height, face_channels;
