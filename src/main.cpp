@@ -106,7 +106,8 @@ int main()
 		glm::vec3 cam_up;
 		float focal_length;
 		glm::vec3 cam_pos;
-		float __padding;
+		float sch_radius;
+		GLuint iterations;
 	} data;
 	const glm::vec3 y{0.0f, 1.0f, 0.0f};
 	data.cam_right = glm::normalize(glm::cross(camera.direction, y));
@@ -114,6 +115,8 @@ int main()
 	data.cam_pos = camera.position;
 	data.inv_screen_width = 1.0f / camera.width;
 	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
+	data.sch_radius = 0.0f;
+	data.iterations = 128;
 
 	GLuint ssb;
 	glGenBuffers(1, &ssb);
@@ -129,10 +132,10 @@ int main()
 	const auto va = describe_va();
 
 	while (win) {
+
 		glUseProgram(compute_shdr);
 		data.cam_pos.x = std::sin(float(glfwGetTime()));
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER,
-			offsetof(decltype(data), cam_pos), sizeof data.cam_pos, &data.cam_pos);
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 

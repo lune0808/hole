@@ -9,6 +9,8 @@ layout(std430,binding=1) readonly restrict buffer scene
 	vec3 cam_up;
 	float focal_length;
 	vec3 cam_pos;
+	float sch_radius;
+	uint iterations;
 };
 uniform layout(location=2) samplerCube skybox;
 
@@ -16,8 +18,16 @@ const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
 const vec3 sphere_pos = vec3(0.5, 0.0, -1.0);
 const float sphere_r = 0.2;
 
-const float dl = 0.1;
-const uint iterations = 100;
+void ray_accel(float r, float b, out float dphi_dt, out float d2r_dt2)
+{
+	dphi_dt = b / (r*r) * (1.0 - sch_radius / r);
+	d2r_dt2 = -sch_radius / b * dphi_dt + (r - 2.5 * sch_radius) * dphi_dt * dphi_dt;
+}
+
+vec3 rotate_quat(vec4 q, vec3 v)
+{
+	return v + 2.0 * cross(cross(v, q.xyz) + q.w * v, q.xyz);
+}
 
 vec4 color(ivec2 coord)
 {
@@ -26,17 +36,52 @@ vec4 color(ivec2 coord)
 	vec3 ray = normalize(vec3(pixel, -0.866));
 	vec3 pos = cam_pos;
 	float hit = 0.0;
+	vec3 start_radial = pos - sphere_pos;
+	vec3 start_radial_n = normalize(start_radial);
+	vec3 orbital_axis = normalize(cross(start_radial, ray));
+	float r = length(start_radial);
+
+	// return vec4(pos, 1.0);
+	// return texture(skybox, ray);
+
+	if (r <= sch_radius) {
+		return vec4(0.0);
+	}
+	float phi = 0;
+	float dr_dt = dot(ray, start_radial_n);
+	vec3 start_angular_n = cross(orbital_axis, start_radial_n);
+	float dphi_dt = 1.0 / r * dot(ray - dr_dt * start_radial_n, start_angular_n);
+	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
+	// float sgn = sign(dot(ray, start_radial));
+	// float dr_dt = sgn * (sch_radius/r - 1.0) * sqrt(1.0 + b*b / (r*r) * (sch_radius/r - 1.0);
+	vec3 output_color = vec3(0.0);
+	const float dt = 5.0f / float(iterations);
 	for (uint iter = 0; iter < iterations; iter++) {
-		vec3 diff = sphere_pos - pos;
-		if (dot(diff, diff) <= sphere_r*sphere_r) {
+		if (abs(r) < sch_radius) {
 			hit = 1.0;
 			break;
 		}
-		vec3 dr_over_dl = 0.007 / dot(diff, diff) * normalize(diff);
-		ray = normalize(ray + dl * dr_over_dl);
-		pos = pos + dl * ray;
+		if (abs(r) < sphere_r) {
+			hit = 1.0;
+			output_color = vec3(1.0, 0.0, 0.0);
+			break;
+		}
+		float dr2_dt2;
+		ray_accel(r, b, dphi_dt, dr2_dt2);
+		r     += dt * dr_dt;
+		dr_dt += dt * dr2_dt2;
+		phi   += dt * dphi_dt;
 	}
-	return vec4(hit * vec3(0.3, 0.1, 0.03) + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
+	float s = sin(phi * 0.5);
+	float c = cos(phi * 0.5);
+	vec4 q = vec4(s * orbital_axis, c);
+	vec3 end_radial = rotate_quat(q, start_radial_n);
+	pos = sphere_pos + r * end_radial;
+	float invr2 = inversesqrt(2.0);
+	vec3 end_angular = rotate_quat(q, start_angular_n);
+	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
+	return vec4(ray, 1.0);
+	return vec4(hit * output_color + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
 }
 
 void main()
