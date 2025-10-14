@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <thread>
 #include <cstddef>
 #include <cassert>
 #include <glm/glm.hpp>
@@ -61,16 +62,19 @@ int main()
 		{ 0.0f, 0.0f,-1.0f },
 	};
 
-	GLuint texture;
-	glGenTextures(1, &texture);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, texture);
-	glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
-	glBindImageTexture(0 /* cs binding */, texture, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+	static constexpr size_t n_frames = 16;
+
+	GLuint frame[n_frames];
+	glGenTextures(n_frames, frame);
+	for (size_t i_frame = 0; i_frame < n_frames; ++i_frame) {
+		glActiveTexture(GL_TEXTURE1 + i_frame);
+		glBindTexture(GL_TEXTURE_2D, frame[i_frame]);
+		glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
+	}
 
 	GLuint skybox;
 	glGenTextures(1, &skybox);
-	glActiveTexture(GL_TEXTURE1);
+	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, skybox);
 	static const char *const skybox_paths[6] = {
 		"res/sky_right.png",
@@ -115,7 +119,7 @@ int main()
 	data.cam_pos = camera.position;
 	data.inv_screen_width = 1.0f / camera.width;
 	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
-	data.sch_radius = 0.1f;
+	data.sch_radius = 0.0f;
 	data.iterations = 1024;
 
 	glfwSetKeyCallback(win.handle, [](GLFWwindow *handle, int key, int, int action, int)
@@ -134,24 +138,50 @@ int main()
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
 	glUseProgram(compute_shdr);
-	glUniform1i(2 /* skybox */, 1 /* GL_TEXTURE1 */);
+	glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
 	glUseProgram(graphics_shdr);
-	glUniform1i(0 /* graphics binding for screen */, 0 /* GL_TEXTURE0 */);
 
 	const auto va = describe_va();
 
-	while (win) {
-
+	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
+		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
-		data.cam_pos.x = 0.125f * std::sin(float(glfwGetTime()));
+		data.cam_pos.x = float(i_frame) * 0.01f;
+		data.sch_radius = float(i_frame) * 0.003f;
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
 		glUseProgram(graphics_shdr);
+		glUniform1i(0 /* graphics binding for screen */, 1+i_frame /* GL_TEXTURE1+i */);
 		glBindVertexArray(va);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 		win.draw();
+
+		std::printf("\rframe #%zu", i_frame);
+		std::fflush(stdout);
+	}
+	std::printf("\r");
+	std::fflush(stdout);
+
+	size_t cur_frame = 0;
+	bool up = true;
+	while (win) {
+		if (up) {
+			cur_frame++;
+		} else {
+			cur_frame--;
+		}
+		if (cur_frame == 0 || cur_frame == n_frames-1) {
+			up ^= true;
+		}
+		glUseProgram(graphics_shdr);
+		glUniform1i(0 /* graphics binding for screen */, 1+cur_frame /* GL_TEXTURE1+i */);
+		glBindVertexArray(va);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		win.draw();
+		using namespace std::chrono_literals;
+		std::this_thread::sleep_for(50ms);
 	}
 }
 
