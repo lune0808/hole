@@ -25,6 +25,32 @@ void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_d
 	d2r_dt2 = dr_dt*dr_dt * sch_radius / (rho * r*r) + (rho*r - 0.5*sch_radius) * dphi_dt*dphi_dt;
 }
 
+// y = (r, dr/dt, phi)
+// dy/dt = (dr/dt, d2r/dt2, dphi/dt)
+vec3 differentiate(float b, vec3 y)
+{
+	vec3 dy_dt;
+	ray_accel(y.x, b, y.y, dy_dt.z, dy_dt.y);
+	dy_dt.x = y.y;
+	return dy_dt;
+}
+
+vec3 euler(vec3 y, float b, float h)
+{
+	vec3 dy_dt = differentiate(b, y);
+	return y + h * dy_dt;
+}
+
+vec3 rk4(vec3 y, float b, float h)
+{
+	vec3 k1 = differentiate(b, y             );
+	vec3 k2 = differentiate(b, y + 0.5*h * k1);
+	vec3 k3 = differentiate(b, y + 0.5*h * k2);
+	vec3 k4 = differentiate(b, y +     h * k3);
+	float inv6 = 1.0 / 6.0;
+	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
+}
+
 vec3 rotate_quat(vec4 q, vec3 v)
 {
 	return v + 2.0 * cross(cross(v, q.xyz) + q.w * v, q.xyz);
@@ -52,20 +78,22 @@ vec4 color(ivec2 coord)
 	// float sgn = sign(dot(ray, start_radial));
 	// float dr_dt = sgn * (sch_radius/r - 1.0) * sqrt(1.0 + b*b / (r*r) * (sch_radius/r - 1.0);
 	vec3 output_color = vec3(0.0);
-	const float dt = 5e-3;
+	const float dt = 2e-2;
 	float rmax = max(sch_radius, sphere_r);
+	vec3 y = vec3(r, dr_dt, phi);
 	for (uint iter = 0; iter < iterations; iter++) {
+		r = y.x;
 		if (abs(r) < rmax) {
 			hit = 1.0;
 			output_color = vec3(0.2, 0.0, 0.0);
 			break;
 		}
 		float dr2_dt2;
-		ray_accel(r, b, dr_dt, dphi_dt, dr2_dt2);
-		r     += dt * dr_dt;
-		dr_dt += dt * dr2_dt2;
-		phi   += dt * dphi_dt;
+		y = rk4(y, b, dt);
 	}
+	r = y.x;
+	dr_dt = y.y;
+	phi = y.z;
 	float s = sin(phi * 0.5);
 	float c = cos(phi * 0.5);
 	vec4 q = vec4(s * orbital_axis, c);

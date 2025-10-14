@@ -120,7 +120,7 @@ int main()
 	data.inv_screen_width = 1.0f / camera.width;
 	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
 	data.sch_radius = 0.0f;
-	data.iterations = 1024;
+	data.iterations = 256;
 
 	glfwSetKeyCallback(win.handle, [](GLFWwindow *handle, int key, int, int action, int)
 	{
@@ -161,8 +161,7 @@ int main()
 		std::printf("\rframe #%zu", i_frame);
 		std::fflush(stdout);
 	}
-	std::printf("\r");
-	std::fflush(stdout);
+	std::printf("\n");
 
 	size_t cur_frame = 0;
 	bool up = true;
