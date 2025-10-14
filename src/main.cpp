@@ -2,6 +2,7 @@
 #include <thread>
 #include <cstddef>
 #include <cassert>
+#include <numbers>
 #include <glm/glm.hpp>
 #include "window.hpp"
 #include "shader.hpp"
@@ -56,11 +57,6 @@ int main()
 	const auto graphics_shdr = build_shader(vertex_src, fragment_src);
 	delete[] vertex_src;
 	delete[] fragment_src;
-	camera_t camera{
-		1.05f, float(width), float(height),
-		{ 0.0f, 0.0f, 1.0f },
-		{ 0.0f, 0.0f,-1.0f },
-	};
 
 	static constexpr size_t n_frames = 32;
 
@@ -111,25 +107,22 @@ int main()
 		float focal_length;
 		glm::vec3 cam_pos;
 		float sch_radius;
+		glm::vec3 sphere_pos;
 		GLuint iterations;
 	} data;
-	const glm::vec3 y{0.0f, 1.0f, 0.0f};
-	data.cam_right = glm::normalize(glm::cross(camera.direction, y));
-	data.cam_up = glm::cross(data.cam_right, camera.direction);
-	data.cam_pos = camera.position;
-	data.inv_screen_width = 1.0f / camera.width;
-	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
-	data.sch_radius = 0.0f;
-	data.iterations = 256;
 
-	glfwSetKeyCallback(win.handle, [](GLFWwindow *handle, int key, int, int action, int)
-	{
-		auto &data_ = *reinterpret_cast<decltype(data)*>(glfwGetWindowUserPointer(handle));
-		if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
-			data_.iterations += 16;
-		}
-	});
-	glfwSetWindowUserPointer(win.handle, &data);
+	const glm::vec3 x{1.0f, 0.0f, 0.0f};
+	const glm::vec3 y{0.0f, 1.0f, 0.0f};
+	const glm::vec3 z{0.0f, 0.0f, 1.0f};
+	data.cam_right = x;
+	data.cam_up = y;
+	data.cam_pos = +1.0f*z;
+	data.sphere_pos = glm::vec3{0.5f, 0.0f, -1.0f};
+	static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
+	data.inv_screen_width = 1.0f / float(width);
+	data.focal_length = 0.5f / std::tan(fov * 0.5f);
+	data.sch_radius = 0.0f;
+	data.iterations = 1024;
 
 	GLuint ssb;
 	glGenBuffers(1, &ssb);

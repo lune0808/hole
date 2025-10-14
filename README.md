@@ -2,9 +2,8 @@ ray tracer with relativistic rays - aka black hole renderer
 
 requires:
 * [glm](https://github.com/g-truc/glm)
-* [stb-image](https://github.com/nothings/stb/blob/master/stb_image.h)
 * OpenGL version >= 4.5
-* C++ version >= 17
+* C++ version >= 20
 
 build (linux):
 $ make [-jN] # if you have N cores

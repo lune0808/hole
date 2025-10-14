@@ -8,7 +8,7 @@ CPPFLAGS = -MMD -MP -Ibin -Iinc $(LIBCPPFLAGS)
 DEBUG = -ggdb3
 OPT ?=
 CFLAGS = $(SAN) $(DEBUG) $(OPT)
-CXXFLAGS = -std=c++17 $(SAN) $(DEBUG) $(OPT)
+CXXFLAGS = -std=c++20 $(SAN) $(DEBUG) $(OPT)
 LDFLAGS = $(SAN) $(LIBLDFLAGS) -lm
 
 CC = gcc
