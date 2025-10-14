@@ -136,12 +136,14 @@ int main()
 
 	const auto va = describe_va();
 
+	const glm::vec3 start_pos = data.cam_pos;
+	const glm::vec3 end_pos = glm::mix(start_pos, data.sphere_pos, 0.6f);
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
-		// data.cam_pos.z = 1.0f - float(i_frame) * 1.5f/32.0f;
-		data.cam_pos.x = float(i_frame) * 0.015f;
-		// data.sch_radius = float(i_frame) * 0.008f;
+		float progress = float(i_frame) / float(n_frames-1);
+		data.cam_pos = glm::mix(start_pos, end_pos, progress);
+		data.sch_radius = glm::mix(0.0f, 0.25f, progress*progress);
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -157,8 +159,8 @@ int main()
 	}
 	std::printf("\n");
 
-	size_t cur_frame = 0;
-	bool up = true;
+	size_t cur_frame = n_frames-1;
+	bool up = false;
 	while (win) {
 		if (up) {
 			cur_frame++;

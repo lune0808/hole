@@ -21,10 +21,8 @@ const float sphere_r = 0.2;
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
 	float rho = 1.0 - sch_radius / r;
-	// dphi_dt = b / (r*r) * rho;
-	// d2r_dt2 = dr_dt*dr_dt * sch_radius / (rho * r*r) + (rho*r - 0.5*sch_radius) * dphi_dt*dphi_dt;
-	dphi_dt = b / (r*r);
-	d2r_dt2 = b*b / (r*r*r);
+	dphi_dt = b / (r*r) * rho;
+	d2r_dt2 = dr_dt*dr_dt * sch_radius / (rho * r*r) + (rho*r - 0.5*sch_radius) * dphi_dt*dphi_dt;
 }
 
 // y = (r, dr/dt, phi)
@@ -98,16 +96,17 @@ vec3 trace(vec3 start_ray)
 	vec3 output_color = vec3(1.0);
 	for (uint iter = 0; iter < iterations; iter++) {
 		r = y.x;
-		if (r < sch_radius) {
+		if (abs(r) < sch_radius + 1e-5) {
 			hit = 1.0;
+			output_color = vec3(0.0);
 			break;
-		} else if (r < sphere_r) {
+		} else if (false && r < sphere_r) {
 			hit = 1.0;
 			float phi = y.z;
 			dr_dt = y.y;
 			dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
 			vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
-			vec3 angular = rotate_axis(orbital_axis, phi, start_angular_n);
+			vec3 angular = cross(orbital_axis, radial);
 			ray = dr_dt * radial + r * dphi_dt * angular;
 			ray = reflect(ray, radial);
 			dr_dt = dot(ray, radial);
@@ -120,7 +119,7 @@ vec3 trace(vec3 start_ray)
 	dr_dt = y.y;
 	phi = y.z;
 	vec3 end_radial  = rotate_axis(orbital_axis, phi, start_radial_n);
-	vec3 end_angular = rotate_axis(orbital_axis, phi, start_angular_n);
+	vec3 end_angular = cross(orbital_axis, end_radial);
 	pos = sphere_pos + r * end_radial;
 	float d2r_dt2;
 	ray_accel(r, b, dr_dt, dphi_dt, d2r_dt2);
@@ -134,8 +133,7 @@ vec3 trace(vec3 start_ray)
 vec4 color(ivec2 coord)
 {
 	vec2 pixel = vec2(coord.x * inv_screen_width - 0.5, coord.y * inv_screen_width - 0.5);
-	// if fov = pi/3, focal length = root(3)/2 = 0.866, and camera faces -z
-	vec3 start_ray = normalize(vec3(pixel, -0.866));
+	vec3 start_ray = normalize(vec3(pixel, -focal_length));
 	return vec4(trace(start_ray), 1.0);
 }
 
