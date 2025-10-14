@@ -56,11 +56,22 @@ vec3 rotate_quat(vec4 q, vec3 v)
 	return v + 2.0 * cross(cross(v, q.xyz) + q.w * v, q.xyz);
 }
 
+vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
+{
+	return cosa * v + sina * cross(axis, v) + (1.0 - cosa) * dot(axis, v) * axis;
+}
+
+vec3 rotate_axis(vec3 axis, float angle, vec3 v)
+{
+	return rodrigues_formula(axis, sin(angle), cos(angle), v);
+}
+
 void rotate_axes(vec3 axis, float angle, inout vec3 v1, inout vec3 v2)
 {
-	vec4 q = vec4(sin(angle * 0.5) * axis, cos(angle * 0.5));
-	v1 = rotate_quat(q, v1);
-	v2 = rotate_quat(q, v2);
+	float sina = sin(angle);
+	float cosa = cos(angle);
+	v1 = rodrigues_formula(axis, sina, cosa, v1);
+	v2 = rodrigues_formula(axis, sina, cosa, v2);
 }
 
 vec3 trace(vec3 start_ray)
