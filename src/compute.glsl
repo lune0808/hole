@@ -11,12 +11,13 @@ layout(std430,binding=1) readonly restrict buffer scene
 	vec3 cam_pos;
 	float sch_radius;
 	vec3 sphere_pos;
+	float sphere_r;
+	vec4 q_orientation;
 	uint iterations;
 };
 uniform layout(location=2) samplerCube skybox;
 
 const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
-const float sphere_r = 0.2;
 
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
@@ -51,11 +52,6 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-vec3 rotate_quat(vec4 q, vec3 v)
-{
-	return v + 2.0 * cross(cross(v, q.xyz) + q.w * v, q.xyz);
-}
-
 vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
 {
 	return cosa * v + sina * cross(axis, v) + (1.0 - cosa) * dot(axis, v) * axis;
@@ -64,14 +60,6 @@ vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
 vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 {
 	return rodrigues_formula(axis, sin(angle), cos(angle), v);
-}
-
-void rotate_axes(vec3 axis, float angle, inout vec3 v1, inout vec3 v2)
-{
-	float sina = sin(angle);
-	float cosa = cos(angle);
-	v1 = rodrigues_formula(axis, sina, cosa, v1);
-	v2 = rodrigues_formula(axis, sina, cosa, v2);
 }
 
 vec3 trace(vec3 start_ray)
@@ -83,10 +71,17 @@ vec3 trace(vec3 start_ray)
 	vec3 start_radial_n = normalize(start_radial);
 	vec3 orbital_axis = normalize(cross(start_radial, ray));
 	float r = length(start_radial);
-	if (r <= sch_radius) {
+	// no matter how you integrate, from an observer,
+	// nothing reaches the event horizon
+	// so we flush photons who are orbiting too close
+	// inside, which also reduces the repetitions we see
+	// in the photon sphere
+	float r_limit = sch_radius + 1e-5;
+	if (r <= r_limit) {
 		return vec3(0.0);
 	}
 	float phi = 0;
+	// TODO: find better way to initialize dr/dt, dphi/dt and mainly b impact parameter
 	float dr_dt = dot(ray, start_radial_n);
 	vec3 start_angular_n = cross(orbital_axis, start_radial_n);
 	float dphi_dt = 1.0 / r * dot(ray, start_angular_n);
@@ -95,8 +90,9 @@ vec3 trace(vec3 start_ray)
 	vec3 y = vec3(r, dr_dt, phi);
 	vec3 output_color = vec3(1.0);
 	for (uint iter = 0; iter < iterations; iter++) {
+		y = rk4(y, b, dt);
 		r = y.x;
-		if (abs(r) < sch_radius + 1e-5) {
+		if (abs(r) <= r_limit) {
 			hit = 1.0;
 			output_color = vec3(0.0);
 			break;
@@ -113,7 +109,6 @@ vec3 trace(vec3 start_ray)
 			y = vec3(sphere_r + 1e-6, dr_dt, phi);
 			output_color *= 0.7;
 		}
-		y = rk4(y, b, dt);
 	}
 	r = y.x;
 	dr_dt = y.y;
@@ -130,10 +125,15 @@ vec3 trace(vec3 start_ray)
 	return ambient + hit * diffuse * output_color + (1.0-hit) * sky;
 }
 
+vec3 rotate_quat(vec4 q, vec3 v)
+{
+	return v + 2.0 * cross(q.xyz, q.w * v + cross(q.xyz, v));
+}
+
 vec4 color(ivec2 coord)
 {
 	vec2 pixel = vec2(coord.x * inv_screen_width - 0.5, coord.y * inv_screen_width - 0.5);
-	vec3 start_ray = normalize(vec3(pixel, -focal_length));
+	vec3 start_ray = normalize(rotate_quat(q_orientation, vec3(pixel, -focal_length)));
 	return vec4(trace(start_ray), 1.0);
 }
 

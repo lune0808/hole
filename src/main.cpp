@@ -108,6 +108,8 @@ int main()
 		glm::vec3 cam_pos;
 		float sch_radius;
 		glm::vec3 sphere_pos;
+		float sphere_r;
+		glm::vec4 q_orientation;
 		GLuint iterations;
 	} data;
 
@@ -116,13 +118,14 @@ int main()
 	const glm::vec3 z{0.0f, 0.0f, 1.0f};
 	data.cam_right = x;
 	data.cam_up = y;
-	data.cam_pos = +1.0f*z;
-	data.sphere_pos = glm::vec3{0.5f, 0.0f, -1.0f};
+	data.sphere_r = 0.2f;
+	data.sphere_pos = glm::vec3{data.sphere_r, 0.0f, -1.0f};
 	static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
 	data.inv_screen_width = 1.0f / float(width);
 	data.focal_length = 0.5f / std::tan(fov * 0.5f);
-	data.sch_radius = 0.0f;
+	data.sch_radius = 0.2f;
 	data.iterations = 1024;
+	data.q_orientation = glm::vec4{0.0f, 0.0f, 0.0f, 1.0f};
 
 	GLuint ssb;
 	glGenBuffers(1, &ssb);
@@ -136,14 +139,16 @@ int main()
 
 	const auto va = describe_va();
 
-	const glm::vec3 start_pos = data.cam_pos;
-	const glm::vec3 end_pos = glm::mix(start_pos, data.sphere_pos, 0.6f);
+	const glm::vec3 start_pos = +1.0f*z;
+	const glm::vec3 end_pos = -0x4.0p-17f*x -1.0f*z;
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
 		float progress = float(i_frame) / float(n_frames-1);
+		float angle = progress * std::numbers::pi_v<float> / 4.0f;
+		data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * y, std::cos(angle * 0.5f)};
 		data.cam_pos = glm::mix(start_pos, end_pos, progress);
-		data.sch_radius = glm::mix(0.0f, 0.25f, progress*progress);
+		// data.sch_radius = glm::mix(0.0f, 0.25f, progress*progress);
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -157,7 +162,7 @@ int main()
 		std::printf("\rframe #%zu", i_frame);
 		std::fflush(stdout);
 	}
-	std::printf("\n");
+	std::printf("\r                 \n");
 
 	size_t cur_frame = n_frames-1;
 	bool up = false;
