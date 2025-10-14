@@ -22,7 +22,6 @@ void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_d
 {
 	float rho = 1.0 - sch_radius / r;
 	dphi_dt = b / (r*r) * rho;
-	// d2r_dt2 = -sch_radius / b * dphi_dt + (r - 2.5 * sch_radius) * dphi_dt * dphi_dt;
 	d2r_dt2 = dr_dt*dr_dt * sch_radius / (rho * r*r) + (rho*r - 0.5*sch_radius) * dphi_dt*dphi_dt;
 }
 
@@ -58,7 +57,7 @@ vec4 color(ivec2 coord)
 	for (uint iter = 0; iter < iterations; iter++) {
 		if (abs(r) < rmax) {
 			hit = 1.0;
-			output_color = vec3(1.0, 0.0, 0.0);
+			output_color = vec3(0.2, 0.0, 0.0);
 			break;
 		}
 		float dr2_dt2;
@@ -74,16 +73,7 @@ vec4 color(ivec2 coord)
 	vec3 end_angular = rotate_quat(q, start_angular_n);
 	pos = sphere_pos + r * end_radial;
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
-	float d = dot(normalize(ray), start_ray);
-	// d = dot(normalize(pos - cam_pos), start_ray);
-	// d = dot(normalize(ray), start_ray);
-	// return vec4((normalize(ray)-start_ray), 1.0);
-	// return vec4(vec3(phi/1.57, phi/3.14, phi/6.28).rrr, 1.0);
-	// return vec4(output_color, 1.0);
-	return vec4(vec3(hit), 1.0);
-	// return vec4(vec3(0.0, 1.0-d, d), 1.0);
-	return vec4(hit * output_color + (1.0-hit) * vec3(0.0, 1.0-d, d), 1.0);
-	// return vec4(hit * output_color + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
+	return vec4(hit * output_color + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
 }
 
 void main()

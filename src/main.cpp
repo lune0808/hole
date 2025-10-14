@@ -115,7 +115,7 @@ int main()
 	data.cam_pos = camera.position;
 	data.inv_screen_width = 1.0f / camera.width;
 	data.focal_length = 0.5f / std::tan(camera.fov * 0.5f);
-	data.sch_radius = 0.0f;
+	data.sch_radius = 0.1f;
 	data.iterations = 1024;
 
 	glfwSetKeyCallback(win.handle, [](GLFWwindow *handle, int key, int, int action, int)
@@ -143,7 +143,7 @@ int main()
 	while (win) {
 
 		glUseProgram(compute_shdr);
-		data.cam_pos.x = std::sin(float(glfwGetTime()));
+		data.cam_pos.x = 0.125f * std::sin(float(glfwGetTime()));
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
