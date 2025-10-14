@@ -77,7 +77,6 @@ vec4 color(ivec2 coord)
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
 	// float sgn = sign(dot(ray, start_radial));
 	// float dr_dt = sgn * (sch_radius/r - 1.0) * sqrt(1.0 + b*b / (r*r) * (sch_radius/r - 1.0);
-	vec3 output_color = vec3(0.0);
 	const float dt = 2e-2;
 	float rmax = max(sch_radius, sphere_r);
 	vec3 y = vec3(r, dr_dt, phi);
@@ -85,7 +84,6 @@ vec4 color(ivec2 coord)
 		r = y.x;
 		if (abs(r) < rmax) {
 			hit = 1.0;
-			output_color = vec3(0.2, 0.0, 0.0);
 			break;
 		}
 		float dr2_dt2;
@@ -101,7 +99,19 @@ vec4 color(ivec2 coord)
 	vec3 end_angular = rotate_quat(q, start_angular_n);
 	pos = sphere_pos + r * end_radial;
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
-	return vec4(hit * output_color + (1.0-hit) * texture(skybox, ray).rgb, 1.0);
+	if (hit == 1.0) {
+		ray = end_radial;
+	} else {
+		float threehalf_root3 = 2.5980762;
+		float bcrit = threehalf_root3 * sch_radius;
+		if (b < bcrit) {
+			return vec4(0.0);
+		}
+	}
+	vec3 sky = texture(skybox, ray).rgb;
+	vec3 normal = ray;
+	float diffuse = dot(normal, normalize(light_pos - pos));
+	return vec4(hit * diffuse * (vec3(0.2) + sky) + (1.0-hit) * sky, 1.0);
 }
 
 void main()
