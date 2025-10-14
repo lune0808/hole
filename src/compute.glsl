@@ -56,11 +56,15 @@ vec3 rotate_quat(vec4 q, vec3 v)
 	return v + 2.0 * cross(cross(v, q.xyz) + q.w * v, q.xyz);
 }
 
-vec4 color(ivec2 coord)
+void rotate_axes(vec3 axis, float angle, inout vec3 v1, inout vec3 v2)
 {
-	vec2 pixel = vec2(coord.x * inv_screen_width - 0.5, coord.y * inv_screen_width - 0.5);
-	// if fov = pi/3, focal length = root(3)/2 = 0.866, and camera faces -z
-	vec3 start_ray = normalize(vec3(pixel, -0.866));
+	vec4 q = vec4(sin(angle * 0.5) * axis, cos(angle * 0.5));
+	v1 = rotate_quat(q, v1);
+	v2 = rotate_quat(q, v2);
+}
+
+vec3 trace(vec3 start_ray)
+{
 	vec3 ray = start_ray;
 	vec3 pos = cam_pos;
 	float hit = 0.0;
@@ -68,61 +72,57 @@ vec4 color(ivec2 coord)
 	vec3 start_radial_n = normalize(start_radial);
 	vec3 orbital_axis = normalize(cross(start_radial, ray)); float r = length(start_radial);
 	if (r <= sch_radius) {
-		return vec4(0.0);
+		return vec3(0.0);
 	}
 	float phi = 0;
 	float dr_dt = dot(ray, start_radial_n);
 	vec3 start_angular_n = cross(orbital_axis, start_radial_n);
 	float dphi_dt = 1.0 / r * dot(ray - dr_dt * start_radial_n, start_angular_n);
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
-	const float dt = 2e-2;
+	const float dt = 20e-3;
 	vec3 y = vec3(r, dr_dt, phi);
 	vec3 output_color = vec3(1.0);
 	for (uint iter = 0; iter < iterations; iter++) {
 		r = y.x;
-		if (abs(r) < sch_radius) {
+		if (r < sch_radius) {
 			hit = 1.0;
 			break;
-		} else if (abs(r) < sphere_r) {
+		} else if (r < sphere_r) {
 			hit = 1.0;
 			float phi = y.z;
-			float s = sin(phi * 0.5);
-			float c = cos(phi * 0.5);
-			vec4 q = vec4(s * orbital_axis, c);
-			vec3 radial = rotate_quat(q, start_radial_n);
-			vec3 angular = rotate_quat(q, start_angular_n);
+			vec3 radial = start_radial_n;
+			vec3 angular = start_angular_n;
+			rotate_axes(orbital_axis, phi, radial, angular);
 			ray = reflect(ray, radial);
-			float dr_dt = dot(ray, radial);
-			float dphi_dt = 1.0 / r * dot(ray - dr_dt * radial, angular);
+			dr_dt = dot(ray, radial);
 			y = vec3(sphere_r + 1e-6, dr_dt, phi);
-			output_color *= vec3(0.8, 0.3, 0.2);
+			output_color *= vec3(0.9);
 		}
-		float dr2_dt2;
 		y = rk4(y, b, dt);
 	}
 	r = y.x;
 	dr_dt = y.y;
 	phi = y.z;
-	float s = sin(phi * 0.5);
-	float c = cos(phi * 0.5);
-	vec4 q = vec4(s * orbital_axis, c);
-	vec3 end_radial  = rotate_quat(q, start_radial_n );
-	vec3 end_angular = rotate_quat(q, start_angular_n);
+	vec3 end_radial  = start_radial_n;
+	vec3 end_angular = start_angular_n;
+	rotate_axes(orbital_axis, phi, end_radial, end_angular);
 	pos = sphere_pos + r * end_radial;
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
-	if (hit == 1.0) {
-	} else {
-		float threehalf_root3 = 2.5980762;
-		float bcrit = threehalf_root3 * sch_radius;
-		if (b < bcrit) {
-			return vec4(0.0);
-		}
-	}
 	vec3 sky = texture(skybox, ray).rgb;
-	vec3 normal = ray;
+	vec3 normal = normalize(ray);
 	float diffuse = dot(normal, normalize(light_pos - pos));
 	vec3 ambient = vec3(0.03);
-	return vec4(ambient + hit * diffuse * output_color * sky + (1.0-hit) * sky, 1.0);
+	float dev = 1.0 - dot(normal, start_ray);
+	// return vec3(dev);
+	return ambient + hit * diffuse * output_color * sky + (1.0-hit) * sky;
+}
+
+vec4 color(ivec2 coord)
+{
+	vec2 pixel = vec2(coord.x * inv_screen_width - 0.5, coord.y * inv_screen_width - 0.5);
+	// if fov = pi/3, focal length = root(3)/2 = 0.866, and camera faces -z
+	vec3 start_ray = normalize(vec3(pixel, -0.866));
+	return vec4(trace(start_ray), 1.0);
 }
 
 void main()
