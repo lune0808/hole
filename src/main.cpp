@@ -146,8 +146,9 @@ int main()
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
-		data.cam_pos.x = float(i_frame) * 0.01f;
-		data.sch_radius = float(i_frame) * 0.008f;
+		// data.cam_pos.z = 1.0f - float(i_frame) * 1.5f/32.0f;
+		data.cam_pos.x = float(i_frame) * 0.015f;
+		// data.sch_radius = float(i_frame) * 0.008f;
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);

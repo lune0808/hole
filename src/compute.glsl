@@ -70,7 +70,8 @@ vec3 trace(vec3 start_ray)
 	float hit = 0.0;
 	vec3 start_radial = pos - sphere_pos;
 	vec3 start_radial_n = normalize(start_radial);
-	vec3 orbital_axis = normalize(cross(start_radial, ray)); float r = length(start_radial);
+	vec3 orbital_axis = normalize(cross(start_radial, ray));
+	float r = length(start_radial);
 	if (r <= sch_radius) {
 		return vec3(0.0);
 	}
@@ -84,20 +85,23 @@ vec3 trace(vec3 start_ray)
 	vec3 output_color = vec3(1.0);
 	for (uint iter = 0; iter < iterations; iter++) {
 		r = y.x;
-		if (r < sch_radius) {
+		if (false) { if (r < sch_radius) {
 			hit = 1.0;
 			break;
 		} else if (r < sphere_r) {
 			hit = 1.0;
 			float phi = y.z;
+			dr_dt = y.y;
+			dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
 			vec3 radial = start_radial_n;
 			vec3 angular = start_angular_n;
 			rotate_axes(orbital_axis, phi, radial, angular);
+			ray = dr_dt * radial + r * dphi_dt * angular;
 			ray = reflect(ray, radial);
 			dr_dt = dot(ray, radial);
 			y = vec3(sphere_r + 1e-6, dr_dt, phi);
 			output_color *= vec3(0.9);
-		}
+		} }
 		y = rk4(y, b, dt);
 	}
 	r = y.x;
@@ -110,10 +114,10 @@ vec3 trace(vec3 start_ray)
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 normal = normalize(ray);
-	float diffuse = dot(normal, normalize(light_pos - pos));
+	float diffuse = max(0.0, dot(normal, normalize(light_pos - pos)));
 	vec3 ambient = vec3(0.03);
-	float dev = 1.0 - dot(normal, start_ray);
-	// return vec3(dev);
+	// float cos_dev = dot(normal, start_ray);
+	// return vec3(cos_dev);
 	return ambient + hit * diffuse * output_color * sky + (1.0-hit) * sky;
 }
 
