@@ -139,7 +139,7 @@ int main()
 
 	const auto va = describe_va();
 
-	const glm::vec3 start_pos = +1.0f*z + 0.6f*y;
+	const glm::vec3 start_pos = +1.0f*z + 0.9f*y;
 	const glm::vec3 end_pos = -0x4.0p-17f*x -1.0f*z - 0.5f*y;
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);

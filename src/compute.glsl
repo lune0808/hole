@@ -116,8 +116,10 @@ vec3 trace(vec3 start_ray)
 		} else if (accretion_min < r_on_disk && r_on_disk < accretion_max) {
 			// output_color *= ???
 			if (d * d < 0.001) {
-				return output_color;
+				return vec3(1.0, 0.0, 0.0);
 			}
+		} else if (r > accretion_min && d * d > 0.995) {
+			return vec3(0.0, 1.0, 0.0);
 		}
 	}
 	r = y.x;
