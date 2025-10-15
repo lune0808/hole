@@ -53,28 +53,25 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 0.6;
+const float accretion_min = 0.3;
 const float accretion_max = 2.0;
 const vec3 accretion_normal = vec3(0.0, 1.0, 0.0);
-const float accretion_height = 0.1;
+const float accretion_height = 0.01;
 
 // y = (rdisk, ddisk, i)
+// models di/ds = u[light energy density] - mu*i[absorptiveness of the cloud]
+// completely heuristic
 float diff_intensity(vec3 y)
 {
-	float local_light = 0.0;
-	float local_abso = 0.0;
-	if (false && accretion_min < y.x && y.x < accretion_max && y.y < 0.001) {
-		local_light = 1.0 / pow(sch_radius + y.x, 2.0);
-	}
 	float s1 = 2.0 * accretion_height / accretion_min;
 	float s2 = -accretion_height / (accretion_max - accretion_min);
 	float allowed_height = min((y.x - accretion_min * 0.5) * s1, (y.x - accretion_min) * s2);
 	float height = y.x * y.y;
-	float in_disk = max((allowed_height - height), 0.0);
-	float d0 = 0.5;
-	float density = d0 * (y.x - 0.5 * accretion_min) * exp(y.x / (accretion_max + 0.5 * accretion_min));
-	local_light = in_disk * density;
-	local_abso = in_disk * 0.90;
+	float in_disk = max(0.0, min(1.0, allowed_height - height));
+	float d0 = 2.0;
+	float density = d0 * (y.x - 0.5 * accretion_min) * exp(-y.x / (accretion_max + 0.5 * accretion_min));
+	float local_light = in_disk * density;
+	float local_abso = in_disk * 0.90;
 	return local_light - local_abso * y.z;
 }
 

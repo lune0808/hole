@@ -139,8 +139,8 @@ int main()
 
 	const auto va = describe_va();
 
-	const glm::vec3 start_pos = +1.0f*z + 0.9f*y;
-	const glm::vec3 end_pos = -0x4.0p-17f*x -1.0f*z - 0.5f*y;
+	const glm::vec3 start_pos = +1.0f*z + 0.6f*y;
+	const glm::vec3 end_pos = -0x1.0p-10f*x -0.95f*z - 0.015f*y;
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
@@ -178,10 +178,10 @@ int main()
 		glUseProgram(graphics_shdr);
 		glUniform1i(0 /* graphics binding for screen */, 1+cur_frame /* GL_TEXTURE1+i */);
 		glBindVertexArray(va);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		win.draw();
 		using namespace std::chrono_literals;
 		std::this_thread::sleep_for(50ms);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		win.draw();
 	}
 }
 
