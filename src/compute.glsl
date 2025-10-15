@@ -42,14 +42,51 @@ vec3 euler(vec3 y, float b, float h)
 	return y + h * dy_dt;
 }
 
+const float inv6 = 1.0 / 6.0;
+
 vec3 rk4(vec3 y, float b, float h)
 {
 	vec3 k1 = differentiate(b, y             );
 	vec3 k2 = differentiate(b, y + 0.5*h * k1);
 	vec3 k3 = differentiate(b, y + 0.5*h * k2);
 	vec3 k4 = differentiate(b, y +     h * k3);
-	float inv6 = 1.0 / 6.0;
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
+}
+
+const float accretion_min = 0.6;
+const float accretion_max = 2.0;
+const vec3 accretion_normal = vec3(0.0, 1.0, 0.0);
+const float accretion_height = 0.1;
+
+// y = (rdisk, ddisk, i)
+float diff_intensity(vec3 y)
+{
+	float local_light = 0.0;
+	float local_abso = 0.0;
+	if (false && accretion_min < y.x && y.x < accretion_max && y.y < 0.001) {
+		local_light = 1.0 / pow(sch_radius + y.x, 2.0);
+	}
+	float s1 = 2.0 * accretion_height / accretion_min;
+	float s2 = -accretion_height / (accretion_max - accretion_min);
+	float allowed_height = min((y.x - accretion_min * 0.5) * s1, (y.x - accretion_min) * s2);
+	float height = y.x * y.y;
+	float in_disk = max((allowed_height - height), 0.0);
+	float d0 = 0.5;
+	float density = d0 * (y.x - 0.5 * accretion_min) * exp(y.x / (accretion_max + 0.5 * accretion_min));
+	local_light = in_disk * density;
+	local_abso = in_disk * 0.90;
+	return local_light - local_abso * y.z;
+}
+
+float rk4_intensity(float rdisk, float ddisk, float i, float h)
+{
+	vec3 y = vec3(rdisk, ddisk, i);
+	float k1 = diff_intensity(y);
+	float k2 = diff_intensity(y + 0.5*h * k1);
+	float k3 = diff_intensity(y + 0.5*h * k2);
+	float k4 = diff_intensity(y +     h * k3);
+	y = y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
+	return y.z;
 }
 
 vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
@@ -61,10 +98,6 @@ vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 {
 	return rodrigues_formula(axis, sin(angle), cos(angle), v);
 }
-
-const float accretion_min = 0.6f;
-const float accretion_max = 2.0f;
-const vec3 accretion_normal = vec3(0.0, 1.0, 0.0);
 
 vec3 trace(vec3 start_ray)
 {
@@ -92,34 +125,20 @@ vec3 trace(vec3 start_ray)
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
 	const float dt = 5e-2;
 	vec3 y = vec3(r, dr_dt, phi);
-	vec3 output_color = vec3(1.0);
+	float light = 0.0;
 
 	for (uint iter = 0; iter < iterations; iter++) {
 		y = rk4(y, b, dt);
 		r = y.x;
 		phi = y.z;
+		dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
 		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
-		float d = dot(radial, accretion_normal);
-		float r_on_disk = r * sqrt(1.0 - d * d);
+		float ddisk = dot(radial, accretion_normal);
+		float rdisk = r * sqrt(1.0 - ddisk*ddisk);
+		float ds = sqrt(dr_dt*dr_dt + r*r * dphi_dt*dphi_dt) * dt;
+		light = rk4_intensity(rdisk, ddisk, light, ds);
 		if (abs(r) <= r_limit) {
 			return vec3(0.0);
-		} else if (r < sphere_r) {
-			hit = 1.0;
-			dr_dt = y.y;
-			dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
-			vec3 angular = cross(orbital_axis, radial);
-			ray = dr_dt * radial + r * dphi_dt * angular;
-			ray = reflect(ray, radial);
-			dr_dt = dot(ray, radial);
-			y = vec3(r_limit + 1e-6, dr_dt, phi);
-			output_color *= 0.7;
-		} else if (accretion_min < r_on_disk && r_on_disk < accretion_max) {
-			// output_color *= ???
-			if (d * d < 0.001) {
-				return vec3(1.0, 0.0, 0.0);
-			}
-		} else if (r > accretion_min && d * d > 0.995) {
-			return vec3(0.0, 1.0, 0.0);
 		}
 	}
 	r = y.x;
@@ -133,8 +152,8 @@ vec3 trace(vec3 start_ray)
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.03);
-	float diffuse = max(0.0, dot(normalize(cam_pos - pos), normalize(ray)));
-	return ambient + hit * diffuse * output_color + (1.0-hit) * sky;
+	return ambient + sky + light * vec3(1.0);
+	// return ambient + hit * output_color + (1.0-hit) * sky;
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
