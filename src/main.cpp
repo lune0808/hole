@@ -58,15 +58,13 @@ int main()
 	delete[] vertex_src;
 	delete[] fragment_src;
 
-	static constexpr size_t n_frames = 32;
+	static constexpr size_t n_frames = 48;
 
-	GLuint frame[n_frames];
-	glGenTextures(n_frames, frame);
-	for (size_t i_frame = 0; i_frame < n_frames; ++i_frame) {
-		glActiveTexture(GL_TEXTURE1 + i_frame);
-		glBindTexture(GL_TEXTURE_2D, frame[i_frame]);
-		glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, width, height);
-	}
+	GLuint sim;
+	glGenTextures(1, &sim);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, sim);
+	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA32F, width, height, n_frames);
 
 	GLuint skybox;
 	glGenTextures(1, &skybox);
@@ -136,13 +134,14 @@ int main()
 	glUseProgram(compute_shdr);
 	glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
 	glUseProgram(graphics_shdr);
+	glUniform1i(0 /* graphics binding for screen */, 1 /* GL_TEXTURE1 */);
 
 	const auto va = describe_va();
 
 	const glm::vec3 start_pos = +1.0f*z + 0.6f*y;
 	const glm::vec3 end_pos = -0x1.0p-10f*x -0.95f*z - 0.015f*y;
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
-		glBindImageTexture(0 /* cs binding */, frame[i_frame], 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+		glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
 		float progress = float(i_frame) / float(n_frames-1);
 		float angle = progress * std::numbers::pi_v<float> / 4.0f;
@@ -154,7 +153,7 @@ int main()
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
 		glUseProgram(graphics_shdr);
-		glUniform1i(0 /* graphics binding for screen */, 1+i_frame /* GL_TEXTURE1+i */);
+		glUniform1f(1 /* location for frame */, float(i_frame));
 		glBindVertexArray(va);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 		win.draw();
@@ -162,7 +161,7 @@ int main()
 		std::printf("\rframe #%zu", i_frame);
 		std::fflush(stdout);
 	}
-	std::printf("\r                 \n");
+	std::printf("\r                 \r");
 
 	size_t cur_frame = n_frames-1;
 	bool up = false;
@@ -176,7 +175,7 @@ int main()
 			up ^= true;
 		}
 		glUseProgram(graphics_shdr);
-		glUniform1i(0 /* graphics binding for screen */, 1+cur_frame /* GL_TEXTURE1+i */);
+		glUniform1f(1 /* location for frame */, float(cur_frame));
 		glBindVertexArray(va);
 		using namespace std::chrono_literals;
 		std::this_thread::sleep_for(50ms);
