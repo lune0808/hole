@@ -62,6 +62,10 @@ vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 	return rodrigues_formula(axis, sin(angle), cos(angle), v);
 }
 
+const float accretion_min = 0.6f;
+const float accretion_max = 2.0f;
+const vec3 accretion_normal = vec3(0.0, 1.0, 0.0);
+
 vec3 trace(vec3 start_ray)
 {
 	vec3 ray = start_ray;
@@ -86,28 +90,34 @@ vec3 trace(vec3 start_ray)
 	vec3 start_angular_n = cross(orbital_axis, start_radial_n);
 	float dphi_dt = 1.0 / r * dot(ray, start_angular_n);
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
-	const float dt = 5e-3;
+	const float dt = 5e-2;
 	vec3 y = vec3(r, dr_dt, phi);
 	vec3 output_color = vec3(1.0);
+
 	for (uint iter = 0; iter < iterations; iter++) {
 		y = rk4(y, b, dt);
 		r = y.x;
+		phi = y.z;
+		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
+		float d = dot(radial, accretion_normal);
+		float r_on_disk = r * sqrt(1.0 - d * d);
 		if (abs(r) <= r_limit) {
+			return vec3(0.0);
+		} else if (r < sphere_r) {
 			hit = 1.0;
-			output_color = vec3(0.0);
-			break;
-		} else if (false && r < sphere_r) {
-			hit = 1.0;
-			float phi = y.z;
 			dr_dt = y.y;
 			dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
-			vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
 			vec3 angular = cross(orbital_axis, radial);
 			ray = dr_dt * radial + r * dphi_dt * angular;
 			ray = reflect(ray, radial);
 			dr_dt = dot(ray, radial);
-			y = vec3(sphere_r + 1e-6, dr_dt, phi);
+			y = vec3(r_limit + 1e-6, dr_dt, phi);
 			output_color *= 0.7;
+		} else if (accretion_min < r_on_disk && r_on_disk < accretion_max) {
+			// output_color *= ???
+			if (d * d < 0.001) {
+				return output_color;
+			}
 		}
 	}
 	r = y.x;
