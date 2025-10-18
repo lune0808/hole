@@ -44,6 +44,12 @@ GLuint describe_va()
 	return va;
 }
 
+static float smoothstep(float x)
+{
+	// flat tangents at 0 & 1, mapping [0,1] to [0,1]
+	return 3.0f * x * x - 2.0f * x * x * x;
+}
+
 int main()
 {
 	const int width = 800;
@@ -58,7 +64,7 @@ int main()
 	delete[] vertex_src;
 	delete[] fragment_src;
 
-	static constexpr size_t n_frames = 48;
+	static constexpr size_t n_frames = 256;
 
 	GLuint sim;
 	glGenTextures(1, &sim);
@@ -117,12 +123,12 @@ int main()
 	data.cam_right = x;
 	data.cam_up = y;
 	data.sphere_r = 0.2f;
-	data.sphere_pos = glm::vec3{data.sphere_r, 0.0f, -1.0f};
-	static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
+	data.sch_radius = 20.0f;
+	data.sphere_pos = glm::vec3{data.sch_radius, 0.0, -data.sch_radius};
+	static constexpr float fov = std::numbers::pi_v<float> / 2.0f;
 	data.inv_screen_width = 1.0f / float(width);
 	data.focal_length = 0.5f / std::tan(fov * 0.5f);
-	data.sch_radius = 0.2f;
-	data.iterations = 96;
+	data.iterations = 1024;
 	data.q_orientation = glm::vec4{0.0f, 0.0f, 0.0f, 1.0f};
 
 	GLuint ssb;
@@ -138,16 +144,16 @@ int main()
 
 	const auto va = describe_va();
 
-	const glm::vec3 start_pos = +1.0f*z + 0.6f*y;
-	const glm::vec3 end_pos = -0x1.0p-10f*x -0.95f*z - 0.015f*y;
+	const glm::vec3 end_pos = -(1.0f+1e-3f)*data.sch_radius*x + data.sphere_pos;
+	const glm::vec3 start_pos = end_pos + -10.0f*x + 40.0f*z;
 	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 		glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
 		float progress = float(i_frame) / float(n_frames-1);
-		float angle = progress * std::numbers::pi_v<float> / 4.0f;
+		progress = smoothstep(progress);
+		float angle = 1.0f * std::numbers::pi_v<float> / 5.0f;
 		data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * y, std::cos(angle * 0.5f)};
 		data.cam_pos = glm::mix(start_pos, end_pos, progress);
-		// data.sch_radius = glm::mix(0.0f, 0.25f, progress*progress);
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 		glDispatchCompute(width, height, 1);
 		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -178,7 +184,7 @@ int main()
 		glUniform1f(1 /* location for frame */, float(cur_frame));
 		glBindVertexArray(va);
 		using namespace std::chrono_literals;
-		std::this_thread::sleep_for(50ms);
+		std::this_thread::sleep_for(20ms);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 		win.draw();
 	}

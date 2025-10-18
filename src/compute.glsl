@@ -22,8 +22,10 @@ const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
 	float rho = 1.0 - sch_radius / r;
-	dphi_dt = b / (r*r) * rho;
-	d2r_dt2 = dr_dt*dr_dt * sch_radius / (rho * r*r) + (rho*r - 0.5*sch_radius) * dphi_dt*dphi_dt;
+	float rm2 = 1.0f / (r * r);
+	dphi_dt = b * rm2 * rho;
+	d2r_dt2 = sch_radius * rho * rm2 * (1.0 - b * b * rho * rm2)
+		+ (r * rho - 0.5 * sch_radius) * dphi_dt * dphi_dt;
 }
 
 // y = (r, dr/dt, phi)
@@ -53,10 +55,10 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 0.3;
-const float accretion_max = 2.0;
+const float accretion_min = 30.0;
+const float accretion_max = 100.0f;
 const vec3 accretion_normal = vec3(0.0, 1.0, 0.0);
-const float accretion_height = 0.01;
+const float accretion_height = 0.1;
 
 // y = (rdisk, ddisk, i)
 // models di/ds = u[light energy density] - mu*i[absorptiveness of the cloud]
@@ -100,7 +102,6 @@ vec3 trace(vec3 start_ray)
 {
 	vec3 ray = start_ray;
 	vec3 pos = cam_pos;
-	float hit = 0.0;
 	vec3 start_radial = pos - sphere_pos;
 	vec3 start_radial_n = normalize(start_radial);
 	vec3 orbital_axis = normalize(cross(start_radial, ray));
@@ -110,33 +111,54 @@ vec3 trace(vec3 start_ray)
 	// so we flush photons who are orbiting too close
 	// inside, which also reduces the repetitions we see
 	// in the photon sphere
-	float r_limit = sch_radius + 1e-5;
+	float r_limit = sch_radius + 1e-4;
 	if (r <= r_limit) {
 		return vec3(0.0);
 	}
 	float phi = 0;
-	// TODO: find better way to initialize dr/dt, dphi/dt and mainly b impact parameter
-	float dr_dt = dot(ray, start_radial_n);
+
+	// we know where the ray is going towards,
+	// but we don't know how much 'distance' it
+	// travels during dt along that direction,
+	// so we calculate initial conditions based
+	// on the conservation of specific quantities
+	// in a way that is independent of this length
+	// with <l.u,ur>/<l.u,u0>=<u,ur>/<u,u0> (ray=l.u)
 	vec3 start_angular_n = cross(orbital_axis, start_radial_n);
-	float dphi_dt = 1.0 / r * dot(ray, start_angular_n);
+	float dev_radial = dot(ray, start_radial_n);
+	float dev_angular = dot(ray, start_angular_n); // always >= 0
+	float dphi_dt;
+	float dr_dt;
+	float rho = 1.0 - sch_radius / r;
+	// compute dr/dphi or dphi/dr whichever doesn't blow up
+	if (dev_angular > 0.707) {
+		float looking_at = abs(dev_radial) / dev_angular;
+		dphi_dt = inversesqrt(1.0 + (r * looking_at / rho) * (r * looking_at / rho));
+		dr_dt = sign(dev_radial) * r * dphi_dt * looking_at;
+	} else {
+		float looking_at = dev_angular / abs(dev_radial);
+		dr_dt = sign(dev_radial) * rho * inversesqrt(1.0 + (looking_at * rho / r) * (looking_at * rho / r));
+		dphi_dt = abs(dr_dt) * looking_at / r;
+	}
+
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
-	const float dt = 5e-2;
+	const float dt = sch_radius * 10.0 / float(iterations);
 	vec3 y = vec3(r, dr_dt, phi);
 	float light = 0.0;
 
 	for (uint iter = 0; iter < iterations; iter++) {
 		y = rk4(y, b, dt);
 		r = y.x;
-		phi = y.z;
-		dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
-		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
-		float ddisk = dot(radial, accretion_normal);
-		float rdisk = r * sqrt(1.0 - ddisk*ddisk);
-		float ds = sqrt(dr_dt*dr_dt + r*r * dphi_dt*dphi_dt) * dt;
-		light = rk4_intensity(rdisk, ddisk, light, ds);
 		if (abs(r) <= r_limit) {
 			return vec3(0.0);
 		}
+		phi = y.z;
+		// dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
+		// vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
+		// float ddisk = dot(radial, accretion_normal);
+		// float rdisk = r * sqrt(1.0 - ddisk*ddisk);
+		// float ds = sqrt(dr_dt*dr_dt + r*r * dphi_dt*dphi_dt) * dt;
+		// light = rk4_intensity(rdisk, ddisk, light, ds);
 	}
 	r = y.x;
 	dr_dt = y.y;
@@ -150,7 +172,6 @@ vec3 trace(vec3 start_ray)
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.03);
 	return ambient + sky + light * vec3(1.0);
-	// return ambient + hit * output_color + (1.0-hit) * sky;
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
