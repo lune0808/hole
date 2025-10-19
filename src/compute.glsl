@@ -55,9 +55,9 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 30.0;
-const float accretion_max = 100.0f;
-const vec3 accretion_normal = vec3(0.0, 1.0, 0.0);
+const float accretion_min = 3.0f;
+const float accretion_max = 15.0f;
+const vec3 accretion_normal = normalize(vec3(0.1, 0.9, 0.2));
 const float accretion_height = 0.1;
 
 // y = (rdisk, ddisk, i)
@@ -65,6 +65,11 @@ const float accretion_height = 0.1;
 // completely heuristic
 float diff_intensity(vec3 y)
 {
+	if (accretion_min < y.x && y.x < accretion_max && y.y * y.y < 0.001) {
+		return 1.0;
+	} else {
+		return 0.0;
+	}
 	float s1 = 2.0 * accretion_height / accretion_min;
 	float s2 = -accretion_height / (accretion_max - accretion_min);
 	float allowed_height = min((y.x - accretion_min * 0.5) * s1, (y.x - accretion_min) * s2);
@@ -156,19 +161,20 @@ vec3 trace(vec3 start_ray)
 		y = rk4(y, b, dt);
 		r = y.x;
 		if (abs(r) <= r_limit) {
-			return vec3(0.0);
+			return light * vec3(1.0);
 		}
 		if (r > 10.0 * sch_radius && y.y > 0.0) {
 			break;
 		}
-		// phi = y.z;
-		// dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
-		// vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
-		// float ddisk = dot(radial, accretion_normal);
-		// float rdisk = r * sqrt(1.0 - ddisk*ddisk);
-		// float ds = sqrt(dr_dt*dr_dt + r*r * dphi_dt*dphi_dt) * dt;
-		// light = rk4_intensity(rdisk, ddisk, light, ds);
+		phi = y.z;
+		dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
+		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
+		float ddisk = dot(radial, accretion_normal);
+		float rdisk = r * sqrt(1.0 - ddisk*ddisk);
+		float ds = sqrt(dr_dt*dr_dt + r*r * dphi_dt*dphi_dt) * dt;
+		light = rk4_intensity(rdisk, ddisk, light, ds);
 	}
+
 	r = y.x;
 	dr_dt = y.y;
 	phi = y.z;
