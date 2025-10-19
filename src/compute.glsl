@@ -55,8 +55,8 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 6.0f;
-const float accretion_max = 20.0f;
+const float accretion_min = 3.0f;
+const float accretion_max = 25.0f;
 const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
 const float accretion_height = 0.1;
 
@@ -76,21 +76,17 @@ float diff_intensity(vec3 y)
 	float axis_falloff = ((0.001 - y.y * y.y) * 1000.0);
 	float in_accretion_plane = max(0.0, min(1.0, axis_falloff));
 	float in_disk = in_accretion_range * in_accretion_plane;
-	float density = 0.1;
+	float density_at_rstable = 1.0;
+	float density_at_rmax = 1e-4;
+	float rscale = log2(density_at_rmax) / (accretion_max - accretion_min);
+	float dscale = exp2(-rscale * accretion_min);
+	float density = density_at_rstable * dscale * exp2(rscale * y.x / sch_radius);
+	if (y.x < 2.0 * accretion_min) {
+		density = density_at_rstable * pow(smoothstep((y.x - accretion_min) / accretion_min), 8.0);
+	}
 	float local_light = in_disk * density;
-	return local_light;
-	/*
-	float s1 = 2.0 * accretion_height / accretion_min;
-	float s2 = -accretion_height / (accretion_max - accretion_min);
-	float allowed_height = min((y.x - accretion_min * 0.5) * s1, (y.x - accretion_min) * s2);
-	float height = y.x * y.y;
-	float in_disk = max(0.0, min(1.0, allowed_height - height));
-	float d0 = 2.0;
-	float density = d0 * (y.x - 0.5 * accretion_min) * exp(-y.x / (accretion_max + 0.5 * accretion_min));
-	float local_light = in_disk * density;
-	float local_abso = 0.0 * in_disk * 0.90;
+	float local_abso = in_disk * 0.05;
 	return local_light - local_abso * y.z;
-	*/
 }
 
 float rk4_intensity(float rdisk, float ddisk, float i, float h)
@@ -165,6 +161,7 @@ vec3 trace(vec3 start_ray)
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
 	// const float dt = sch_radius * 10.0 / float(iterations);
 	vec3 y = vec3(r, dr_dt, phi);
+	float hit = 0.0;
 	float light = 0.0;
 
 	for (uint iter = 0; iter < iterations; iter++) {
@@ -172,7 +169,8 @@ vec3 trace(vec3 start_ray)
 		y = rk4(y, b, dt);
 		r = y.x;
 		if (abs(r) <= r_limit) {
-			return light * vec3(1.0);
+			hit = 1.0;
+			break;
 		}
 		if (r > max(accretion_max * 3.0, 10.0 * sch_radius) && y.y > 0.0) {
 			break;
@@ -197,7 +195,7 @@ vec3 trace(vec3 start_ray)
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.03);
-	return ambient + sky + light * vec3(1.0);
+	return ambient + (1.0-hit) * sky + light * vec3(1.0);
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)

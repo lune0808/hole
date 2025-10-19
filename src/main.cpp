@@ -151,7 +151,7 @@ int main()
 		glUseProgram(compute_shdr);
 		float progress = float(i_frame) / float(n_frames-1);
 		progress = smoothstep(progress);
-		float angle = progress * std::numbers::pi_v<float> / 10.0f;
+		float angle = progress * std::numbers::pi_v<float> / 6.0f;
 		data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * y, std::cos(angle * 0.5f)};
 		data.cam_pos = glm::mix(start_pos, end_pos, progress);
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
