@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstdint>
 #include <thread>
 #include <cstddef>
 #include <cassert>
@@ -50,14 +51,34 @@ static float smoothstep(float x)
 	return 3.0f * x * x - 2.0f * x * x * x;
 }
 
+struct dump_t {
+	struct {
+		std::int32_t width;
+		std::int32_t height;
+		std::int32_t frame_count;
+		std::int32_t ms_per_frame;
+	} header;
+	std::unique_ptr<std::uint32_t[]> data;
+};
+
+dump_t dump(int width, int height, int frames, std::chrono::milliseconds dt, GLuint gl_name)
+{
+	dump_t d;
+	d.header.width = width;
+	d.header.height = height;
+	d.header.frame_count = frames;
+	d.header.ms_per_frame = dt.count();
+	size_t count = size_t(width) * size_t(height) * size_t(frames);
+	d.data = std::make_unique<std::uint32_t[]>(count);
+	glGetTextureImage(gl_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, count * sizeof(d.data[0]), d.data.get());
+	return d;
+}
+
 int main()
 {
 	const int width = 800;
 	const int height = 600;
 	window win(width, height);
-	auto compute_src = load_file("src/compute.glsl");
-	const auto compute_shdr = build_shader(compute_src);
-	delete[] compute_src;
 	auto vertex_src = load_file("src/vertex.glsl");
 	auto fragment_src = load_file("src/fragment.glsl");
 	const auto graphics_shdr = build_shader(vertex_src, fragment_src);
@@ -71,6 +92,19 @@ int main()
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D_ARRAY, sim);
 	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA32F, width, height, n_frames);
+	glUseProgram(graphics_shdr);
+	glUniform1i(0 /* graphics binding for screen */, 1 /* GL_TEXTURE1 */);
+
+	const auto va = describe_va();
+
+	using namespace std::chrono_literals;
+	const std::chrono::milliseconds frame_time = 20ms;
+
+	if (0) {
+
+	auto compute_src = load_file("src/compute.glsl");
+	const auto compute_shdr = build_shader(compute_src);
+	delete[] compute_src;
 
 	GLuint skybox;
 	glGenTextures(1, &skybox);
@@ -139,10 +173,6 @@ int main()
 
 	glUseProgram(compute_shdr);
 	glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
-	glUseProgram(graphics_shdr);
-	glUniform1i(0 /* graphics binding for screen */, 1 /* GL_TEXTURE1 */);
-
-	const auto va = describe_va();
 
 	const glm::vec3 end_pos = data.sch_radius * (-2.0f*x + 2.0f*z +0.0f*y) + data.sphere_pos;
 	const glm::vec3 start_pos = end_pos + 1.0f * data.sch_radius * (-0.0f*x + 15.0f*z + 4.0f*y);
@@ -169,6 +199,25 @@ int main()
 	}
 	std::printf("\r                 \r");
 
+	const auto dumped = dump(width, height, n_frames, frame_time, sim);
+	const char *output_path = "/tmp/0.dump";
+	std::FILE *output_file = std::fopen(output_path, "w");
+	std::fwrite(&dumped.header, sizeof(dumped.header), 1, output_file);
+	std::fwrite(dumped.data.get(), sizeof(std::uint32_t), dumped.header.width*dumped.header.height*dumped.header.frame_count, output_file);
+	std::fclose(output_file);
+
+	} else {
+		const char *input_path = "/tmp/0.dump";
+		std::FILE *input_file = std::fopen(input_path, "r");
+		dump_t dumped;
+		std::fread(&dumped.header, sizeof(dumped.header), 1, input_file);
+		size_t count = dumped.header.width*dumped.header.height*dumped.header.frame_count;
+		dumped.data = std::make_unique<std::uint32_t[]>(count);
+		std::fread(dumped.data.get(), sizeof(std::uint32_t), count, input_file);
+		glTextureSubImage3D(sim, 0, 0, 0, 0, dumped.header.width, dumped.header.height, dumped.header.frame_count, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, dumped.data.get());
+		std::fclose(input_file);
+	}
+
 	size_t cur_frame = n_frames-1;
 	bool up = false;
 	while (win) {
@@ -183,8 +232,7 @@ int main()
 		glUseProgram(graphics_shdr);
 		glUniform1f(1 /* location for frame */, float(cur_frame));
 		glBindVertexArray(va);
-		using namespace std::chrono_literals;
-		std::this_thread::sleep_for(20ms);
+		std::this_thread::sleep_for(frame_time);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 		win.draw();
 	}

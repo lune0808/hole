@@ -224,6 +224,7 @@ vec4 color(ivec2 coord)
 void main()
 {
 	ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-	imageStore(screen, coord, color(coord));
+	imageStore(screen, coord, vec4(0.25, 0.50, 0.75, 1.00));
+	// imageStore(screen, coord, color(coord));
 }
 
