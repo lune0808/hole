@@ -55,21 +55,31 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 3.0f;
-const float accretion_max = 15.0f;
-const vec3 accretion_normal = normalize(vec3(0.1, 0.9, 0.2));
+const float accretion_min = 6.0f;
+const float accretion_max = 20.0f;
+const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
 const float accretion_height = 0.1;
+
+float smoothstep(float x)
+{
+	return 3.0 * x * x - 2.0 * x * x * x;
+}
 
 // y = (rdisk, ddisk, i)
 // models di/ds = u[light energy density] - mu*i[absorptiveness of the cloud]
 // completely heuristic
 float diff_intensity(vec3 y)
 {
-	if (accretion_min < y.x && y.x < accretion_max && y.y * y.y < 0.001) {
-		return 1.0;
-	} else {
-		return 0.0;
-	}
+	float in_falloff = (y.x - accretion_min);
+	float out_falloff = (accretion_max - y.x);
+	float in_accretion_range = max(0.0, min(1.0, min(in_falloff, out_falloff)));
+	float axis_falloff = ((0.001 - y.y * y.y) * 1000.0);
+	float in_accretion_plane = max(0.0, min(1.0, axis_falloff));
+	float in_disk = in_accretion_range * in_accretion_plane;
+	float density = 0.1;
+	float local_light = in_disk * density;
+	return local_light;
+	/*
 	float s1 = 2.0 * accretion_height / accretion_min;
 	float s2 = -accretion_height / (accretion_max - accretion_min);
 	float allowed_height = min((y.x - accretion_min * 0.5) * s1, (y.x - accretion_min) * s2);
@@ -78,8 +88,9 @@ float diff_intensity(vec3 y)
 	float d0 = 2.0;
 	float density = d0 * (y.x - 0.5 * accretion_min) * exp(-y.x / (accretion_max + 0.5 * accretion_min));
 	float local_light = in_disk * density;
-	float local_abso = in_disk * 0.90;
+	float local_abso = 0.0 * in_disk * 0.90;
 	return local_light - local_abso * y.z;
+	*/
 }
 
 float rk4_intensity(float rdisk, float ddisk, float i, float h)
@@ -163,7 +174,7 @@ vec3 trace(vec3 start_ray)
 		if (abs(r) <= r_limit) {
 			return light * vec3(1.0);
 		}
-		if (r > 10.0 * sch_radius && y.y > 0.0) {
+		if (r > max(accretion_max * 3.0, 10.0 * sch_radius) && y.y > 0.0) {
 			break;
 		}
 		phi = y.z;
