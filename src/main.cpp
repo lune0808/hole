@@ -158,6 +158,25 @@ GLuint graphics_shader(const char *vpath, const char *fpath)
 	return shdr;
 }
 
+static constexpr glm::vec3 X{1.0f, 0.0f, 0.0f};
+static constexpr glm::vec3 Y{0.0f, 1.0f, 0.0f};
+static constexpr glm::vec3 Z{0.0f, 0.0f, 1.0f};
+
+static constexpr float start_sch_r = 2.0f;
+static constexpr float   end_sch_r = 2.0f;
+
+static constexpr float start_angle = 0.0f;
+static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
+
+static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
+static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
+
+static constexpr int default_width = 800;
+static constexpr int default_height = 600;
+static constexpr size_t default_frames = 48;
+static constexpr size_t default_frame_time = 5000 / default_frames;
+static constexpr size_t default_iterations = 256;
+
 int main(int argc, char **argv)
 {
 	enum { OUTPUT, INPUT } mode = OUTPUT;
@@ -175,11 +194,11 @@ int main(int argc, char **argv)
 		assert(sim_repr.data);
 	}
 
-	const int width = (mode == OUTPUT)? 800: sim_repr.header.width;
-	const int height = (mode == OUTPUT)? 600: sim_repr.header.height;
+	const int width = (mode == OUTPUT)? default_width: sim_repr.header.width;
+	const int height = (mode == OUTPUT)? default_height: sim_repr.header.height;
 	window win(width, height); // context creation, etc
 	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
-	const size_t n_frames = (mode == OUTPUT)? 48: sim_repr.header.frame_count;
+	const size_t n_frames = (mode == OUTPUT)? default_frames: sim_repr.header.frame_count;
 
 	GLuint sim;
 	glGenTextures(1, &sim);
@@ -193,7 +212,7 @@ int main(int argc, char **argv)
 
 	using namespace std::chrono_literals;
 	const std::chrono::milliseconds frame_time{
-		(mode == OUTPUT)? (5000/n_frames): sim_repr.header.ms_per_frame
+		(mode == OUTPUT)? default_frame_time: sim_repr.header.ms_per_frame
 	};
 
 	if (mode == OUTPUT) {
@@ -234,31 +253,21 @@ int main(int argc, char **argv)
 
 		struct
 		{
-			glm::vec3 cam_right;
-			float inv_screen_width;
-			glm::vec3 cam_up;
-			float focal_length;
-			glm::vec3 cam_pos;
-			float sch_radius;
-			glm::vec3 sphere_pos;
-			float sphere_r;
 			glm::vec4 q_orientation;
+			glm::vec3 cam_pos;
+			float inv_screen_width;
+			glm::vec3 sphere_pos;
+			float focal_length;
+			float sch_radius;
 			GLuint iterations;
+			unsigned char __padding[8];
 		} data;
 
-		const glm::vec3 x{1.0f, 0.0f, 0.0f};
-		const glm::vec3 y{0.0f, 1.0f, 0.0f};
-		const glm::vec3 z{0.0f, 0.0f, 1.0f};
-		data.cam_right = x;
-		data.cam_up = y;
-		data.sphere_r = 0.2f;
-		data.sch_radius = 2.0f;
-		data.sphere_pos = glm::vec3{data.sch_radius, 0.0, -data.sch_radius};
+		data.sphere_pos = glm::vec3{2.0f, 0.0f, -2.0f};
 		static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
 		data.inv_screen_width = 1.0f / float(width);
 		data.focal_length = 0.5f / std::tan(fov * 0.5f);
-		data.iterations = 256;
-		data.q_orientation = glm::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+		data.iterations = default_iterations;
 
 		GLuint ssb;
 		glGenBuffers(1, &ssb);
@@ -269,16 +278,15 @@ int main(int argc, char **argv)
 		glUseProgram(compute_shdr);
 		glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
 
-		const glm::vec3 end_pos = data.sch_radius * (-2.0f*x + 2.0f*z +0.0f*y) + data.sphere_pos;
-		const glm::vec3 start_pos = end_pos + 1.0f * data.sch_radius * (-0.0f*x + 15.0f*z + 4.0f*y);
 		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 			glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
 			glUseProgram(compute_shdr);
 			float progress = float(i_frame) / float(n_frames-1);
 			progress = smoothstep(progress);
-			float angle = progress * std::numbers::pi_v<float> / 6.0f;
-			data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * y, std::cos(angle * 0.5f)};
+			float angle = glm::mix(start_angle, end_angle, progress);
+			data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * Y, std::cos(angle * 0.5f)};
 			data.cam_pos = glm::mix(start_pos, end_pos, progress);
+			data.sch_radius = glm::mix(start_sch_r, end_sch_r, progress);
 			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 			glDispatchCompute(width, height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);

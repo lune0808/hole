@@ -4,15 +4,12 @@ layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 uniform layout(binding=0,rgba32f) writeonly restrict image2D screen;
 layout(std430,binding=1) readonly restrict buffer scene
 {
-	vec3 cam_right;
-	float inv_screen_width;
-	vec3 cam_up;
-	float focal_length;
-	vec3 cam_pos;
-	float sch_radius;
-	vec3 sphere_pos;
-	float sphere_r;
 	vec4 q_orientation;
+	vec3 cam_pos;
+	float inv_screen_width;
+	vec3 sphere_pos;
+	float focal_length;
+	float sch_radius;
 	uint iterations;
 };
 uniform layout(location=2) samplerCube skybox;
