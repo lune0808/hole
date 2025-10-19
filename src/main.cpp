@@ -24,7 +24,6 @@ static const float quad[] = {
 	-1.0f, -1.0f,
 	+1.0f, -1.0f,
 	-1.0f, +1.0f,
-
 	-1.0f, +1.0f,
 	+1.0f, -1.0f,
 	+1.0f, +1.0f,
@@ -175,7 +174,57 @@ static constexpr int default_width = 800;
 static constexpr int default_height = 600;
 static constexpr size_t default_frames = 48;
 static constexpr size_t default_frame_time = 5000 / default_frames;
-static constexpr size_t default_iterations = 256;
+static constexpr size_t default_iterations = 96;
+
+GLuint load_skybox(GLenum unit, const char *path_fmt)
+{
+	GLuint tex;
+	glGenTextures(1, &tex);
+	glActiveTexture(unit);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+	const char *replacement[6] = { "right", "left", "top", "bottom", "front", "back" };
+	static constexpr size_t bufsize = 128;
+	char buf[bufsize];
+	for (size_t face = 0; face < std::size(replacement); ++face) {
+		int width;
+		int height;
+		int channels;
+		std::snprintf(buf, bufsize, path_fmt, replacement[face]);
+		auto data = stbi_load(buf, &width, &height, &channels, 0);
+		assert(data);
+		static const GLenum formats[] = { GL_RED, GL_RG, GL_RGB, GL_RGBA, };
+		assert(0 <= channels && channels <= std::size(formats));
+		const auto format = formats[channels-1];
+		glTexImage2D(
+			GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+			0 /* mipmap */, format,
+			width, height,
+			0, format, GL_UNSIGNED_BYTE, data
+		);
+		stbi_image_free(data);
+	}
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	return tex;
+}
+
+GLuint texture_array(GLenum unit, GLenum format, size_t width, size_t height, size_t depth)
+{
+	GLuint tex;
+	glGenTextures(1, &tex);
+	glActiveTexture(unit);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1 /* mipmap */, format, width, height, depth);
+	return tex;
+}
+
+void enable_sim_frame(GLuint binding, GLuint texture, size_t index, GLenum format)
+{
+	glBindImageTexture(binding, texture, 0, GL_FALSE, index, GL_WRITE_ONLY, format);
+}
 
 int main(int argc, char **argv)
 {
@@ -200,11 +249,7 @@ int main(int argc, char **argv)
 	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
 	const size_t n_frames = (mode == OUTPUT)? default_frames: sim_repr.header.frame_count;
 
-	GLuint sim;
-	glGenTextures(1, &sim);
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D_ARRAY, sim);
-	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA32F, width, height, n_frames);
+	GLuint sim = texture_array(GL_TEXTURE1, GL_RGBA32F, width, height, n_frames);
 	glUseProgram(graphics_shdr);
 	glUniform1i(0 /* graphics binding for screen */, 1 /* GL_TEXTURE1 */);
 
@@ -220,36 +265,7 @@ int main(int argc, char **argv)
 		const auto compute_shdr = build_shader(compute_src);
 		delete[] compute_src;
 
-		GLuint skybox;
-		glGenTextures(1, &skybox);
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_CUBE_MAP, skybox);
-		static const char *const skybox_paths[6] = {
-			"res/sky_right.png",
-			"res/sky_left.png",
-			"res/sky_top.png",
-			"res/sky_bottom.png",
-			"res/sky_front.png",
-			"res/sky_back.png",
-		};
-		for (size_t i = 0; i < std::size(skybox_paths); ++i) {
-			int face_width, face_height, face_channels;
-			auto face = stbi_load(skybox_paths[i], &face_width, &face_height, &face_channels, 0);
-			assert(face);
-			static const GLenum formats[] = {
-				GL_RED, GL_RG, GL_RGB, GL_RGBA,
-			};
-			assert(0 <= face_channels && face_channels <= std::size(formats));
-			const auto format = formats[face_channels-1];
-			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-					0, format, face_width, face_height, 0, format, GL_UNSIGNED_BYTE, face);
-			stbi_image_free(face);
-		}
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		GLuint skybox = load_skybox(GL_TEXTURE0, "res/sky_%s.png");
 
 		struct
 		{
@@ -279,7 +295,7 @@ int main(int argc, char **argv)
 		glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
 
 		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
-			glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
+			enable_sim_frame(0, sim, i_frame, GL_RGBA32F);
 			glUseProgram(compute_shdr);
 			float progress = float(i_frame) / float(n_frames-1);
 			progress = smoothstep(progress);
