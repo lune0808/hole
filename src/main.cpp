@@ -193,7 +193,7 @@ int main(int argc, char **argv)
 
 	using namespace std::chrono_literals;
 	const std::chrono::milliseconds frame_time{
-		(mode == OUTPUT)? 20: sim_repr.header.ms_per_frame
+		(mode == OUTPUT)? (5000/n_frames): sim_repr.header.ms_per_frame
 	};
 
 	if (mode == OUTPUT) {
@@ -298,8 +298,7 @@ int main(int argc, char **argv)
 		upload(std::move(sim_repr), sim);
 	}
 
-	back_and_forth counter(n_frames);
-	while (win) {
+	for (back_and_forth counter(n_frames); win; counter.advance()) {
 		draw_settings set{graphics_shdr, quad_va, 1, float(counter.cur)};
 		draw_quad(set);
 		win.draw();
