@@ -98,6 +98,11 @@ vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 	return rodrigues_formula(axis, sin(angle), cos(angle), v);
 }
 
+float dt_scale(float x)
+{
+	return min(5.0*x, x * x + 1.0);
+}
+
 vec3 trace(vec3 start_ray)
 {
 	vec3 ray = start_ray;
@@ -142,17 +147,21 @@ vec3 trace(vec3 start_ray)
 	}
 
 	float b = r * r * dphi_dt / (1.0 - sch_radius/r);
-	const float dt = sch_radius * 10.0 / float(iterations);
+	// const float dt = sch_radius * 10.0 / float(iterations);
 	vec3 y = vec3(r, dr_dt, phi);
 	float light = 0.0;
 
 	for (uint iter = 0; iter < iterations; iter++) {
+		const float dt = dt_scale(y.x / sch_radius) * 1.0e+1 / float(iterations);
 		y = rk4(y, b, dt);
 		r = y.x;
 		if (abs(r) <= r_limit) {
 			return vec3(0.0);
 		}
-		phi = y.z;
+		if (r > 10.0 * sch_radius && y.y > 0.0) {
+			break;
+		}
+		// phi = y.z;
 		// dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
 		// vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
 		// float ddisk = dot(radial, accretion_normal);
