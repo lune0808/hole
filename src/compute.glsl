@@ -77,10 +77,10 @@ float diff_intensity(vec3 y)
 	float in_accretion_plane = max(0.0, min(1.0, axis_falloff));
 	float in_disk = in_accretion_range * in_accretion_plane;
 	float density_at_rstable = 1.0;
-	float density_at_rmax = 1e-4;
-	float rscale = log2(density_at_rmax) / (accretion_max - accretion_min);
-	float dscale = exp2(-rscale * accretion_min);
-	float density = density_at_rstable * dscale * exp2(rscale * y.x / sch_radius);
+	float density_at_rmax = 0.1;
+	float dscale = (2.0 * accretion_min - accretion_max) / (1.0 - 1.0 / density_at_rmax);
+	float rscale = dscale - 2.0 * accretion_min;
+	float density = density_at_rstable * dscale / (rscale + y.x);
 	if (y.x < 2.0 * accretion_min) {
 		density = density_at_rstable * pow(smoothstep((y.x - accretion_min) / accretion_min), 8.0);
 	}
@@ -113,6 +113,17 @@ vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 float dt_scale(float x)
 {
 	return min(5.0*x, x * x + 1.0);
+}
+
+vec3 light_shift(float intensity)
+{
+	float r0 = 1.0;
+	float g0 = 3.0;
+	float b0 = 9.0;
+	float r = pow(intensity, r0);
+	float g = pow(intensity, g0);
+	float b = pow(intensity, b0);
+	return vec3(r, g, b);
 }
 
 vec3 trace(vec3 start_ray)
@@ -195,7 +206,7 @@ vec3 trace(vec3 start_ray)
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.03);
-	return ambient + (1.0-hit) * sky + light * vec3(1.0);
+	return ambient + (1.0-hit) * sky + light_shift(light);
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
