@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <thread>
 #include <cstddef>
 #include <cassert>
@@ -61,6 +62,11 @@ struct dump_t {
 	std::unique_ptr<std::uint32_t[]> data;
 };
 
+size_t npixels(dump_t const &d)
+{
+	return d.header.width * d.header.height * d.header.frame_count;
+}
+
 dump_t dump(int width, int height, int frames, std::chrono::milliseconds dt, GLuint gl_name)
 {
 	dump_t d;
@@ -68,24 +74,112 @@ dump_t dump(int width, int height, int frames, std::chrono::milliseconds dt, GLu
 	d.header.height = height;
 	d.header.frame_count = frames;
 	d.header.ms_per_frame = dt.count();
-	size_t count = size_t(width) * size_t(height) * size_t(frames);
+	size_t count = npixels(d);
 	d.data = std::make_unique<std::uint32_t[]>(count);
 	glGetTextureImage(gl_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, count * sizeof(d.data[0]), d.data.get());
 	return d;
 }
 
-int main()
+int to_file(dump_t const &d, const char *path)
 {
-	const int width = 800;
-	const int height = 600;
-	window win(width, height);
-	auto vertex_src = load_file("src/vertex.glsl");
-	auto fragment_src = load_file("src/fragment.glsl");
-	const auto graphics_shdr = build_shader(vertex_src, fragment_src);
-	delete[] vertex_src;
-	delete[] fragment_src;
+	const size_t pix = npixels(d);
+	std::FILE *file = std::fopen(path, "w");
+	if (!file) {
+		return 1;
+	}
+	std::fwrite(&d.header, sizeof(d.header), 1, file);
+	std::fwrite(d.data.get(), sizeof(std::uint32_t), pix, file);
+	std::fclose(file);
+	return 0;
+}
 
-	static constexpr size_t n_frames = 48;
+dump_t from_file(const char *path)
+{
+		dump_t d;
+		std::FILE *file = std::fopen(path, "r");
+		if (!file) {
+			return d;
+		}
+		std::fread(&d.header, sizeof(d.header), 1, file);
+		const size_t count = npixels(d);
+		d.data = std::make_unique<std::uint32_t[]>(count);
+		std::fread(d.data.get(), sizeof(std::uint32_t), count, file);
+		std::fclose(file);
+		return d;
+}
+
+void upload(dump_t const &d, GLuint gl_name)
+{
+	glTextureSubImage3D(gl_name, 0 /* mipmap */,
+		0, 0, 0, // x,y,z offsets
+		d.header.width, d.header.height, d.header.frame_count, // x,y,z dimensions
+		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, d.data.get());
+}
+
+struct draw_settings {
+	GLuint shader;
+	GLuint quad_va;
+	GLuint frame_location;
+	float frame_value;
+};
+
+void draw_quad(draw_settings set)
+{
+	glUseProgram(set.shader);
+	glUniform1f(set.frame_location, set.frame_value);
+	glBindVertexArray(set.quad_va);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+struct back_and_forth {
+	size_t cur;
+	size_t max;
+	size_t step;
+
+	back_and_forth(size_t max): cur{0}, max{max-1}, step(1) {}
+
+	size_t advance()
+	{
+		cur += step;
+		if (0 == cur || cur == max) {
+			step = -step;
+		}
+		return cur;
+	}
+};
+
+GLuint graphics_shader(const char *vpath, const char *fpath)
+{
+	auto vsrc = load_file(vpath);
+	auto fsrc = load_file(fpath);
+	auto shdr = build_shader(vsrc, fsrc);
+	delete[] vsrc;
+	delete[] fsrc;
+	return shdr;
+}
+
+int main(int argc, char **argv)
+{
+	enum { OUTPUT, INPUT } mode = OUTPUT;
+	const char *sim_path = "/tmp/black_hole_sim_data.bin";
+	if (argc == 3 && std::strcmp(argv[1], "-o") == 0) {
+		sim_path = argv[2];
+	} else if (argc == 2) {
+		sim_path = argv[1];
+		mode = INPUT;
+	}
+
+	dump_t sim_repr;
+	if (mode == INPUT) {
+		sim_repr = from_file(sim_path);
+		assert(sim_repr.data);
+	}
+
+	const int width = (mode == OUTPUT)? 800: sim_repr.header.width;
+	const int height = (mode == OUTPUT)? 600: sim_repr.header.height;
+	window win(width, height); // context creation, etc
+	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
+	const size_t n_frames = (mode == OUTPUT)? 48: sim_repr.header.frame_count;
 
 	GLuint sim;
 	glGenTextures(1, &sim);
@@ -95,146 +189,121 @@ int main()
 	glUseProgram(graphics_shdr);
 	glUniform1i(0 /* graphics binding for screen */, 1 /* GL_TEXTURE1 */);
 
-	const auto va = describe_va();
+	const auto quad_va = describe_va();
 
 	using namespace std::chrono_literals;
-	const std::chrono::milliseconds frame_time = 20ms;
-
-	if (0) {
-
-	auto compute_src = load_file("src/compute.glsl");
-	const auto compute_shdr = build_shader(compute_src);
-	delete[] compute_src;
-
-	GLuint skybox;
-	glGenTextures(1, &skybox);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_CUBE_MAP, skybox);
-	static const char *const skybox_paths[6] = {
-		"res/sky_right.png",
-		"res/sky_left.png",
-		"res/sky_top.png",
-		"res/sky_bottom.png",
-		"res/sky_front.png",
-		"res/sky_back.png",
+	const std::chrono::milliseconds frame_time{
+		(mode == OUTPUT)? 20: sim_repr.header.ms_per_frame
 	};
-	for (size_t i = 0; i < std::size(skybox_paths); ++i) {
-		int face_width, face_height, face_channels;
-		auto face = stbi_load(skybox_paths[i], &face_width, &face_height, &face_channels, 0);
-		assert(face);
-		static const GLenum formats[] = {
-			GL_RED, GL_RG, GL_RGB, GL_RGBA,
+
+	if (mode == OUTPUT) {
+		auto compute_src = load_file("src/compute.glsl");
+		const auto compute_shdr = build_shader(compute_src);
+		delete[] compute_src;
+
+		GLuint skybox;
+		glGenTextures(1, &skybox);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, skybox);
+		static const char *const skybox_paths[6] = {
+			"res/sky_right.png",
+			"res/sky_left.png",
+			"res/sky_top.png",
+			"res/sky_bottom.png",
+			"res/sky_front.png",
+			"res/sky_back.png",
 		};
-		assert(0 <= face_channels && face_channels <= std::size(formats));
-		const auto format = formats[face_channels-1];
-		glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-			0, format, face_width, face_height, 0, format, GL_UNSIGNED_BYTE, face);
-		stbi_image_free(face);
-	}
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		for (size_t i = 0; i < std::size(skybox_paths); ++i) {
+			int face_width, face_height, face_channels;
+			auto face = stbi_load(skybox_paths[i], &face_width, &face_height, &face_channels, 0);
+			assert(face);
+			static const GLenum formats[] = {
+				GL_RED, GL_RG, GL_RGB, GL_RGBA,
+			};
+			assert(0 <= face_channels && face_channels <= std::size(formats));
+			const auto format = formats[face_channels-1];
+			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
+					0, format, face_width, face_height, 0, format, GL_UNSIGNED_BYTE, face);
+			stbi_image_free(face);
+		}
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-	struct
-	{
-		glm::vec3 cam_right;
-		float inv_screen_width;
-		glm::vec3 cam_up;
-		float focal_length;
-		glm::vec3 cam_pos;
-		float sch_radius;
-		glm::vec3 sphere_pos;
-		float sphere_r;
-		glm::vec4 q_orientation;
-		GLuint iterations;
-	} data;
+		struct
+		{
+			glm::vec3 cam_right;
+			float inv_screen_width;
+			glm::vec3 cam_up;
+			float focal_length;
+			glm::vec3 cam_pos;
+			float sch_radius;
+			glm::vec3 sphere_pos;
+			float sphere_r;
+			glm::vec4 q_orientation;
+			GLuint iterations;
+		} data;
 
-	const glm::vec3 x{1.0f, 0.0f, 0.0f};
-	const glm::vec3 y{0.0f, 1.0f, 0.0f};
-	const glm::vec3 z{0.0f, 0.0f, 1.0f};
-	data.cam_right = x;
-	data.cam_up = y;
-	data.sphere_r = 0.2f;
-	data.sch_radius = 2.0f;
-	data.sphere_pos = glm::vec3{data.sch_radius, 0.0, -data.sch_radius};
-	static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
-	data.inv_screen_width = 1.0f / float(width);
-	data.focal_length = 0.5f / std::tan(fov * 0.5f);
-	data.iterations = 256;
-	data.q_orientation = glm::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+		const glm::vec3 x{1.0f, 0.0f, 0.0f};
+		const glm::vec3 y{0.0f, 1.0f, 0.0f};
+		const glm::vec3 z{0.0f, 0.0f, 1.0f};
+		data.cam_right = x;
+		data.cam_up = y;
+		data.sphere_r = 0.2f;
+		data.sch_radius = 2.0f;
+		data.sphere_pos = glm::vec3{data.sch_radius, 0.0, -data.sch_radius};
+		static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
+		data.inv_screen_width = 1.0f / float(width);
+		data.focal_length = 0.5f / std::tan(fov * 0.5f);
+		data.iterations = 256;
+		data.q_orientation = glm::vec4{0.0f, 0.0f, 0.0f, 1.0f};
 
-	GLuint ssb;
-	glGenBuffers(1, &ssb);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssb);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_DYNAMIC_DRAW);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
+		GLuint ssb;
+		glGenBuffers(1, &ssb);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssb);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_DYNAMIC_DRAW);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
-	glUseProgram(compute_shdr);
-	glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
-
-	const glm::vec3 end_pos = data.sch_radius * (-2.0f*x + 2.0f*z +0.0f*y) + data.sphere_pos;
-	const glm::vec3 start_pos = end_pos + 1.0f * data.sch_radius * (-0.0f*x + 15.0f*z + 4.0f*y);
-	for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
-		glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
 		glUseProgram(compute_shdr);
-		float progress = float(i_frame) / float(n_frames-1);
-		progress = smoothstep(progress);
-		float angle = progress * std::numbers::pi_v<float> / 6.0f;
-		data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * y, std::cos(angle * 0.5f)};
-		data.cam_pos = glm::mix(start_pos, end_pos, progress);
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
-		glDispatchCompute(width, height, 1);
-		glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+		glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
 
-		glUseProgram(graphics_shdr);
-		glUniform1f(1 /* location for frame */, float(i_frame));
-		glBindVertexArray(va);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		win.draw();
+		const glm::vec3 end_pos = data.sch_radius * (-2.0f*x + 2.0f*z +0.0f*y) + data.sphere_pos;
+		const glm::vec3 start_pos = end_pos + 1.0f * data.sch_radius * (-0.0f*x + 15.0f*z + 4.0f*y);
+		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
+			glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
+			glUseProgram(compute_shdr);
+			float progress = float(i_frame) / float(n_frames-1);
+			progress = smoothstep(progress);
+			float angle = progress * std::numbers::pi_v<float> / 6.0f;
+			data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * y, std::cos(angle * 0.5f)};
+			data.cam_pos = glm::mix(start_pos, end_pos, progress);
+			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
+			glDispatchCompute(width, height, 1);
+			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+			draw_settings set{graphics_shdr, quad_va, 1, float(i_frame)};
+			draw_quad(set);
+			win.draw();
 
-		std::printf("\rframe #%zu", i_frame);
-		std::fflush(stdout);
-	}
-	std::printf("\r                 \r");
+			std::printf("\rframe #%zu", i_frame);
+			std::fflush(stdout);
+		}
+		std::printf("\r                 \r");
 
-	const auto dumped = dump(width, height, n_frames, frame_time, sim);
-	const char *output_path = "/tmp/0.dump";
-	std::FILE *output_file = std::fopen(output_path, "w");
-	std::fwrite(&dumped.header, sizeof(dumped.header), 1, output_file);
-	std::fwrite(dumped.data.get(), sizeof(std::uint32_t), dumped.header.width*dumped.header.height*dumped.header.frame_count, output_file);
-	std::fclose(output_file);
-
+		sim_repr = dump(width, height, n_frames, frame_time, sim);
+		int error = to_file(sim_repr, sim_path);
+		assert(!error);
 	} else {
-		const char *input_path = "/tmp/0.dump";
-		std::FILE *input_file = std::fopen(input_path, "r");
-		dump_t dumped;
-		std::fread(&dumped.header, sizeof(dumped.header), 1, input_file);
-		size_t count = dumped.header.width*dumped.header.height*dumped.header.frame_count;
-		dumped.data = std::make_unique<std::uint32_t[]>(count);
-		std::fread(dumped.data.get(), sizeof(std::uint32_t), count, input_file);
-		glTextureSubImage3D(sim, 0, 0, 0, 0, dumped.header.width, dumped.header.height, dumped.header.frame_count, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, dumped.data.get());
-		std::fclose(input_file);
+		upload(std::move(sim_repr), sim);
 	}
 
-	size_t cur_frame = n_frames-1;
-	bool up = false;
+	back_and_forth counter(n_frames);
 	while (win) {
-		if (up) {
-			cur_frame++;
-		} else {
-			cur_frame--;
-		}
-		if (cur_frame == 0 || cur_frame == n_frames-1) {
-			up ^= true;
-		}
-		glUseProgram(graphics_shdr);
-		glUniform1f(1 /* location for frame */, float(cur_frame));
-		glBindVertexArray(va);
-		std::this_thread::sleep_for(frame_time);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
+		draw_settings set{graphics_shdr, quad_va, 1, float(counter.cur)};
+		draw_quad(set);
 		win.draw();
+		std::this_thread::sleep_for(frame_time);
 	}
 }
 
