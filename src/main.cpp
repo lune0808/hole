@@ -151,8 +151,8 @@ static constexpr glm::vec3 X{1.0f, 0.0f, 0.0f};
 static constexpr glm::vec3 Y{0.0f, 1.0f, 0.0f};
 static constexpr glm::vec3 Z{0.0f, 0.0f, 1.0f};
 
-static constexpr float start_sch_r = 0.0f;
-static constexpr float   end_sch_r = 1.0f;
+static constexpr float start_sch_r = 2.0f;
+static constexpr float   end_sch_r = 2.0f;
 
 static constexpr float start_angle = 0.0f;
 static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
@@ -160,12 +160,12 @@ static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
 static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
 static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
 
-static constexpr int default_width = 4;
-static constexpr int default_height = 4;
-static constexpr size_t default_frames = 12;
-static constexpr size_t default_frame_time = 500; // 5000 / default_frames;
+static constexpr int default_width = 800;
+static constexpr int default_height = 600;
+static constexpr size_t default_frames = 48;
+static constexpr size_t default_frame_time = 5000 / default_frames;
 static constexpr size_t default_iterations = 96;
-static constexpr size_t chunk_frame_count = 4;
+static constexpr size_t chunk_frame_count = 16;
 
 GLuint load_skybox(GLenum unit, const char *path_fmt)
 {
