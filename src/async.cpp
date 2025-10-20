@@ -61,7 +61,7 @@ bool file::execute(std::chrono::milliseconds timeout_)
 			.tv_sec=0,
 			.tv_nsec=timeout_.count() * 1'000'000l
 		};
-		int status = aio_suspend(&cb_ptr, 1, &timeout);
+		int status = aio_suspend(&cb_ptr, 1, timeout_ != wait? &timeout: nullptr);
 		if (status == 0) {
 			pos += aio_return(&ctrl);
 			return true;

@@ -14,6 +14,8 @@ struct file
 
 	void read(void *buf, size_t size);
 	void write(const void *buf, size_t size);
+
+	static constexpr std::chrono::milliseconds wait{0};
 	bool execute(std::chrono::milliseconds timeout);
 };
 
