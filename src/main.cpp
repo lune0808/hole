@@ -74,7 +74,7 @@ void issue_texture_dump(file *f, size_t count, GLuint chunk_name)
 	const size_t size = count * sizeof(chunk[0]);
 	auto success = f->execute(file::wait);
 	if (!success) {
-		// std::printf("[io error] write\n");
+		std::printf("[io error] write\n");
 		// program should exit...
 		return;
 	}
@@ -104,7 +104,7 @@ void issue_texture_load(file *f, chunk_info_t const &info, GLuint prev_chunk_nam
 {
 	auto success = f->execute(std::chrono::milliseconds{info.ms_per_frame});
 	if (!success) {
-		// std::printf("[io error] read\n");
+		std::printf("[io error] read\n");
 		return;
 	}
 	std::uint32_t *buf = f->buf.get();
@@ -115,7 +115,6 @@ void issue_texture_load(file *f, chunk_info_t const &info, GLuint prev_chunk_nam
 			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
 	}
 	const size_t size = npixels(info) * sizeof(buf[0]);
-	print_chunk(buf, 4);
 	f->pos = addr;
 	f->read(size);
 }
@@ -137,28 +136,6 @@ void draw_quad(draw_settings set)
 	glBindVertexArray(set.quad_va);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 }
-
-struct back_and_forth {
-	size_t cur;
-	size_t max;
-	size_t step;
-
-	back_and_forth(size_t max): cur{0}, max{max-1}, step(1) {}
-
-	size_t next() const
-	{
-		return cur + step;
-	}
-
-	size_t advance()
-	{
-		cur = next();
-		if (0 == cur || cur == max) {
-			step = -step;
-		}
-		return cur;
-	}
-};
 
 GLuint graphics_shader(const char *vpath, const char *fpath)
 {
@@ -240,6 +217,13 @@ GLuint texture_array(GLenum unit, GLenum format, size_t width, size_t height, si
 void enable_sim_frame(GLuint binding, GLuint texture, size_t index, GLenum format)
 {
 	glBindImageTexture(binding, texture, 0, GL_FALSE, index, GL_WRITE_ONLY, format);
+}
+
+GLuint back_and_forth(GLuint index_, GLuint max_value_)
+{
+	int index = index_;
+	int max_value = max_value_;
+	return max_value - std::abs(index % (2 * max_value) - max_value);
 }
 
 int main(int argc, char **argv)
@@ -352,10 +336,10 @@ int main(int argc, char **argv)
 				issue_texture_dump(&output, pixels, sim[buffer]);
 			}
 
-			// std::printf("\rframe #%zu", i_frame);
-			// std::fflush(stdout);
+			std::printf("\rframe #%zu", i_frame);
+			std::fflush(stdout);
 		}
-		// std::printf("\r                 \r");
+		std::printf("\r                 \r");
 		// push the last issue
 		output.execute(file::wait);
 	}
@@ -370,21 +354,25 @@ int main(int argc, char **argv)
 	issue_texture_load(&input, chunk,      0, sizeof sim_repr);
 	issue_texture_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t));
 
-	for (back_and_forth counter(n_frames); win; counter.advance()) {
-		const GLuint ichunk = (counter.cur / chunk_frame_count);
-		const GLuint buffer = ichunk % 2;
-		const GLuint frame_index = counter.cur % chunk_frame_count;
+	GLuint prev_chunk_index = 0;
+	for (GLuint frame = 0; win; ++frame) {
+		const GLuint frame_index = back_and_forth(frame, sim_repr.frame_count-1);
+		const GLuint chunk_index = frame_index / chunk_frame_count;
+		const GLuint buffer = chunk_index % 2;
+		const GLuint buffer_index = frame_index % chunk_frame_count;
 		draw_settings set{
 			graphics_shdr, quad_va,
-			1, float(counter.cur % chunk_frame_count),
+			1, float(buffer_index),
 			0, buffer,
 		};
-		// std::printf(" f=%zu b=%u i=%u ", counter.cur, buffer, frame_index);
-		const GLuint next_buffer = (counter.next() / chunk_frame_count) % 2;
-		if (next_buffer != buffer) {
-			// wait for NEXT chunk and issue load for new value of CURRENT chunk
-			issue_texture_load(&input, chunk, sim[next_buffer], sizeof sim_repr + ichunk * chunk_pixels * sizeof(std::uint32_t));
+		if (chunk_index != prev_chunk_index) {
+			const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
+			const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
+			assert(next_chunk_index == chunk_index+1 || next_chunk_index == chunk_index-1);
+			issue_texture_load /* and finish pending load */
+				(&input, chunk, sim[buffer], sizeof sim_repr + next_chunk_index * chunk_pixels * sizeof(std::uint32_t));
 		}
+		prev_chunk_index = chunk_index;
 
 		draw_quad(set);
 		win.draw();
