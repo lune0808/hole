@@ -9,7 +9,7 @@ DEBUG = -ggdb3
 OPT ?=
 CFLAGS = $(SAN) $(DEBUG) $(OPT)
 CXXFLAGS = -std=c++20 $(SAN) $(DEBUG) $(OPT)
-LDFLAGS = $(SAN) $(LIBLDFLAGS) -lm
+LDFLAGS = $(SAN) $(LIBLDFLAGS) -lm -lrt
 
 CC = gcc
 CXX = g++

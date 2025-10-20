@@ -8,8 +8,11 @@
 #include <glm/glm.hpp>
 #include "window.hpp"
 #include "shader.hpp"
+#include "async.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
+
+using namespace std::chrono_literals;
 
 struct camera_t
 {
@@ -82,29 +85,37 @@ dump_t dump(int width, int height, int frames, std::chrono::milliseconds dt, GLu
 int to_file(dump_t const &d, const char *path)
 {
 	const size_t pix = npixels(d);
-	std::FILE *file = std::fopen(path, "w");
-	if (!file) {
+	file f{path, file::mode_t::write};
+	if (f.ctrl.aio_fildes == -1) {
 		return 1;
 	}
-	std::fwrite(&d.header, sizeof(d.header), 1, file);
-	std::fwrite(d.data.get(), sizeof(std::uint32_t), pix, file);
-	std::fclose(file);
+	f.write(&d.header, sizeof(d.header));
+	bool success;
+	success = f.execute(800ms);
+	if (!success) std::printf("to_file(1): %m\n");
+	f.write(d.data.get(), pix * sizeof(d.data[0]));
+	success = f.execute(800ms);
+	if (!success) std::printf("to_file(2): %m\n");
 	return 0;
 }
 
 dump_t from_file(const char *path)
 {
-		dump_t d;
-		std::FILE *file = std::fopen(path, "r");
-		if (!file) {
-			return d;
-		}
-		std::fread(&d.header, sizeof(d.header), 1, file);
-		const size_t count = npixels(d);
-		d.data = std::make_unique<std::uint32_t[]>(count);
-		std::fread(d.data.get(), sizeof(std::uint32_t), count, file);
-		std::fclose(file);
+	dump_t d;
+	file f{path, file::mode_t::read};
+	if (f.ctrl.aio_fildes == -1) {
 		return d;
+	}
+	f.read(&d.header, sizeof(d.header));
+	bool success;
+	success = f.execute(800ms);
+	if (!success) std::printf("from_file(1): %m\n");
+	const size_t pix = npixels(d);
+	d.data = std::make_unique<std::uint32_t[]>(pix);
+	f.read(d.data.get(), pix * sizeof(d.data[0]));
+	success = f.execute(800ms);
+	if (!success) std::printf("from_file(2): %m\n");
+	return d;
 }
 
 void upload(dump_t const &d, GLuint gl_name)
@@ -190,16 +201,13 @@ GLuint load_skybox(GLenum unit, const char *path_fmt)
 		int height;
 		int channels;
 		std::snprintf(buf, bufsize, path_fmt, replacement[face]);
-		auto data = stbi_load(buf, &width, &height, &channels, 0);
+		auto data = stbi_load(buf, &width, &height, &channels, 4);
 		assert(data);
-		static const GLenum formats[] = { GL_RED, GL_RG, GL_RGB, GL_RGBA, };
-		assert(0 <= channels && channels <= std::size(formats));
-		const auto format = formats[channels-1];
 		glTexImage2D(
 			GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-			0 /* mipmap */, format,
+			0 /* mipmap */, GL_RGBA,
 			width, height,
-			0, format, GL_UNSIGNED_BYTE, data
+			0, GL_RGBA, GL_UNSIGNED_BYTE, data
 		);
 		stbi_image_free(data);
 	}
@@ -255,7 +263,6 @@ int main(int argc, char **argv)
 
 	const auto quad_va = describe_va();
 
-	using namespace std::chrono_literals;
 	const std::chrono::milliseconds frame_time{
 		(mode == OUTPUT)? default_frame_time: sim_repr.header.ms_per_frame
 	};
