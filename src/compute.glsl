@@ -125,6 +125,8 @@ vec3 light_shift(float intensity)
 
 vec3 trace(vec3 start_ray)
 {
+	return vec3(sch_radius);
+
 	vec3 ray = start_ray;
 	vec3 pos = cam_pos;
 	vec3 start_radial = pos - sphere_pos;

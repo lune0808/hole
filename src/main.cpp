@@ -70,29 +70,55 @@ size_t npixels(chunk_info_t const &h)
 
 void issue_texture_dump(file *f, size_t count, GLuint chunk_name)
 {
-	chunk_t chunk = std::make_unique<std::uint32_t[]>(count);
-	// this blocks until packing is done, also the floating point format is converted
-	// ideally we would keep floats and stream the texture using DSA
+	const chunk_t &chunk = f->buf;
 	const size_t size = count * sizeof(chunk[0]);
-	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, chunk.get());
 	auto success = f->execute(file::wait);
 	if (!success) {
-		std::printf("[io error] write\n");
+		// std::printf("[io error] write\n");
 		// program should exit...
 		return;
 	}
-	f->write(chunk.get(), size);
+	// this blocks until packing is done, also the floating point format is converted
+	// ideally we would keep floats and stream the texture using DSA
+	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, chunk.get());
+	f->write(size);
 }
 
-#if 0
-void upload(dump_t const &d, GLuint gl_name)
+void print_chunk(const std::uint32_t *buf, size_t count)
 {
-	glTextureSubImage3D(gl_name, 0 /* mipmap */,
-		0, 0, 0, // x,y,z offsets
-		d.header.width, d.header.height, d.header.frame_count, // x,y,z dimensions
-		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, d.data.get());
+	std::printf("chunk:");
+	static constexpr std::uint32_t ff = 0xff;
+	for (size_t w = 0; w < count; ++w) {
+		std::printf("%c%02x %02x %02x %02x",
+			(w % 4 == 0) ? '\n': ' ',
+			(buf[w] >>  0) & ff,
+			(buf[w] >>  8) & ff,
+			(buf[w] >> 16) & ff,
+			(buf[w] >> 24) & ff
+		);
+	}
+	std::printf("\n");
 }
-#endif
+
+void issue_texture_load(file *f, chunk_info_t const &info, GLuint prev_chunk_name, size_t addr)
+{
+	auto success = f->execute(std::chrono::milliseconds{info.ms_per_frame});
+	if (!success) {
+		// std::printf("[io error] read\n");
+		return;
+	}
+	std::uint32_t *buf = f->buf.get();
+	if (prev_chunk_name) {
+		glTextureSubImage3D(prev_chunk_name, 0 /* mipmap */,
+			0, 0, 0, // offsets
+			info.width, info.height, info.frame_count, // dimensions
+			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
+	}
+	const size_t size = npixels(info) * sizeof(buf[0]);
+	print_chunk(buf, 4);
+	f->pos = addr;
+	f->read(size);
+}
 
 struct draw_settings {
 	GLuint shader;
@@ -119,9 +145,14 @@ struct back_and_forth {
 
 	back_and_forth(size_t max): cur{0}, max{max-1}, step(1) {}
 
+	size_t next() const
+	{
+		return cur + step;
+	}
+
 	size_t advance()
 	{
-		cur += step;
+		cur = next();
 		if (0 == cur || cur == max) {
 			step = -step;
 		}
@@ -143,8 +174,8 @@ static constexpr glm::vec3 X{1.0f, 0.0f, 0.0f};
 static constexpr glm::vec3 Y{0.0f, 1.0f, 0.0f};
 static constexpr glm::vec3 Z{0.0f, 0.0f, 1.0f};
 
-static constexpr float start_sch_r = 2.0f;
-static constexpr float   end_sch_r = 2.0f;
+static constexpr float start_sch_r = 0.0f;
+static constexpr float   end_sch_r = 1.0f;
 
 static constexpr float start_angle = 0.0f;
 static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
@@ -152,12 +183,12 @@ static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
 static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
 static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
 
-static constexpr int default_width = 800;
-static constexpr int default_height = 600;
-static constexpr size_t default_frames = 48;
-static constexpr size_t default_frame_time = 5000 / default_frames;
+static constexpr int default_width = 4;
+static constexpr int default_height = 4;
+static constexpr size_t default_frames = 12;
+static constexpr size_t default_frame_time = 500; // 5000 / default_frames;
 static constexpr size_t default_iterations = 96;
-static constexpr size_t chunk_frame_count = 8;
+static constexpr size_t chunk_frame_count = 4;
 
 GLuint load_skybox(GLenum unit, const char *path_fmt)
 {
@@ -222,39 +253,40 @@ int main(int argc, char **argv)
 		mode = INPUT;
 	}
 
-	// dump_t sim_repr;
 	chunk_info_t sim_repr;
 	if (mode == INPUT) {
-		// sim_repr = from_file(sim_path);
-		// assert(sim_repr.data);
+		file input{sim_path, file::mode_t::read, sizeof sim_repr};
+		input.read(sizeof sim_repr);
+		bool success = input.execute(file::wait);
+		if (!success) {
+			return 1;
+		}
+		std::memcpy(&sim_repr, input.buf.get(), sizeof sim_repr);
+	} else {
+		sim_repr.width = default_width;
+		sim_repr.height = default_height;
+		sim_repr.frame_count = default_frames;
+		sim_repr.ms_per_frame = default_frame_time;
 	}
-
-	const int width = (mode == OUTPUT)? default_width: sim_repr.width;
-	const int height = (mode == OUTPUT)? default_height: sim_repr.height;
+	const int width = sim_repr.width;
+	const int height = sim_repr.height;
 	window win(width, height); // context creation, etc
 	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
-	const size_t n_frames = (mode == OUTPUT)? default_frames: sim_repr.frame_count;
-	const std::chrono::milliseconds frame_time{
-		(mode == OUTPUT)? default_frame_time: sim_repr.ms_per_frame
-	};
-	sim_repr.width = size_t(width);
-	sim_repr.height = size_t(height);
-	sim_repr.frame_count = n_frames;
-	sim_repr.ms_per_frame = frame_time.count();
+	const size_t n_frames = sim_repr.frame_count;
+	const std::chrono::milliseconds frame_time{sim_repr.ms_per_frame};
 
 	GLuint sim[2];
 	sim[0] = texture_array(GL_TEXTURE0, GL_RGBA32F, width, height, chunk_frame_count);
 	if (n_frames > chunk_frame_count) {
 		sim[1] = texture_array(GL_TEXTURE1, GL_RGBA32F, width, height, chunk_frame_count);
 	}
-	// glUseProgram(graphics_shdr);
-	// glUniform1i(0 /* graphics binding for screen */, 0 /* GL_TEXTURE0 */);
 
 	const auto quad_va = describe_va();
 
 	if (mode == OUTPUT) {
-		file output{sim_path, file::mode_t::write};
-		output.write(&sim_repr, sizeof sim_repr);
+		file output{sim_path, file::mode_t::write, chunk_frame_count * width * height};
+		std::memcpy(output.buf.get(), &sim_repr, sizeof sim_repr);
+		output.write(sizeof sim_repr);
 
 		auto compute_src = load_file("src/compute.glsl");
 		const auto compute_shdr = build_shader(compute_src);
@@ -320,21 +352,40 @@ int main(int argc, char **argv)
 				issue_texture_dump(&output, pixels, sim[buffer]);
 			}
 
-			std::printf("\rframe #%zu", i_frame);
-			std::fflush(stdout);
+			// std::printf("\rframe #%zu", i_frame);
+			// std::fflush(stdout);
 		}
-		std::printf("\r                 \r");
-	} else {
-		// upload(std::move(sim_repr), sim);
+		// std::printf("\r                 \r");
+		// push the last issue
+		output.execute(file::wait);
 	}
 
+	assert(sim_repr.frame_count > chunk_frame_count);
+	chunk_info_t chunk{
+		sim_repr.width, sim_repr.height, chunk_frame_count, file::wait.count()
+	};
+	const size_t chunk_pixels = npixels(chunk);
+	file input{sim_path, file::mode_t::read, chunk_pixels};
+	input.read(sizeof sim_repr);
+	issue_texture_load(&input, chunk,      0, sizeof sim_repr);
+	issue_texture_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t));
+
 	for (back_and_forth counter(n_frames); win; counter.advance()) {
-		const GLuint buffer = (counter.cur / chunk_frame_count) % 2;
+		const GLuint ichunk = (counter.cur / chunk_frame_count);
+		const GLuint buffer = ichunk % 2;
+		const GLuint frame_index = counter.cur % chunk_frame_count;
 		draw_settings set{
 			graphics_shdr, quad_va,
 			1, float(counter.cur % chunk_frame_count),
 			0, buffer,
 		};
+		// std::printf(" f=%zu b=%u i=%u ", counter.cur, buffer, frame_index);
+		const GLuint next_buffer = (counter.next() / chunk_frame_count) % 2;
+		if (next_buffer != buffer) {
+			// wait for NEXT chunk and issue load for new value of CURRENT chunk
+			issue_texture_load(&input, chunk, sim[next_buffer], sizeof sim_repr + ichunk * chunk_pixels * sizeof(std::uint32_t));
+		}
+
 		draw_quad(set);
 		win.draw();
 		std::this_thread::sleep_for(frame_time);

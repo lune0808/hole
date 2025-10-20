@@ -1,10 +1,15 @@
 #include <fcntl.h>
 #include <unistd.h>
+#include <cstring>
 #include "async.hpp"
 
-file::file(const char *path, mode_t mode)
-	: ctrl{}, pos{0}
+file::file(const char *path, mode_t mode, size_t count)
+	: ctrl{}, pos{0}, buf{std::make_unique<std::uint32_t[]>(count)}
 {
+#ifndef NDEBUG
+	std::memset(buf.get(), 0x66, count * sizeof(buf[0]));
+#endif
+
 	int fd;
 	switch (mode) {
 	case mode_t::read:
@@ -29,20 +34,20 @@ file::~file()
 	close(ctrl.aio_fildes);
 }
 
-void file::read(void *buf, size_t size)
+void file::read(size_t size)
 {
 	ctrl.aio_offset = pos;
-	ctrl.aio_buf = buf;
+	ctrl.aio_buf = buf.get();
 	ctrl.aio_nbytes = size;
 	ctrl.aio_reqprio = 0;
 	ctrl.aio_sigevent.sigev_notify = SIGEV_NONE;
 	aio_read(&ctrl);
 }
 
-void file::write(const void *buf, size_t size)
+void file::write(size_t size)
 {
 	ctrl.aio_offset = pos;
-	ctrl.aio_buf = const_cast<void*>(buf);
+	ctrl.aio_buf = buf.get();
 	ctrl.aio_nbytes = size;
 	ctrl.aio_reqprio = 0;
 	ctrl.aio_sigevent.sigev_notify = SIGEV_NONE;
@@ -71,5 +76,11 @@ bool file::execute(std::chrono::milliseconds timeout_)
 	} else {
 		return false;
 	}
+}
+
+bool file::cancel()
+{
+	int status = aio_cancel(ctrl.aio_fildes, &ctrl);
+	return (status == AIO_CANCELED) || (status == AIO_ALLDONE);
 }
 
