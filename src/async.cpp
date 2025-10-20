@@ -3,22 +3,22 @@
 #include <cstring>
 #include "async.hpp"
 
-file::file(const char *path, mode_t mode, size_t count)
-	: ctrl{}, pos{0}, buf{std::make_unique<std::uint32_t[]>(count)}
+file::file(const char *path, mode m, size_t count)
+	: ctrl{}, buf{std::make_unique<std::uint32_t[]>(count)}
 {
 #ifndef NDEBUG
 	std::memset(buf.get(), 0x66, count * sizeof(buf[0]));
 #endif
 
 	int fd;
-	switch (mode) {
-	case mode_t::read:
+	switch (m) {
+	case mode::read:
 		fd = open(path, O_RDONLY);
 		break;
-	case mode_t::write:
+	case mode::write:
 		fd = open(path, O_WRONLY|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
 		break;
-	case mode_t::append:
+	case mode::append:
 		fd = open(path, O_WRONLY|O_CREAT|O_APPEND, S_IRUSR|S_IWUSR);
 		break;
 	default:
@@ -34,41 +34,43 @@ file::~file()
 	close(ctrl.aio_fildes);
 }
 
-void file::read(size_t size)
+off_t file::read(size_t size, off_t at)
 {
-	ctrl.aio_offset = pos;
+	ctrl.aio_offset = at;
 	ctrl.aio_buf = buf.get();
 	ctrl.aio_nbytes = size;
 	ctrl.aio_reqprio = 0;
 	ctrl.aio_sigevent.sigev_notify = SIGEV_NONE;
 	aio_read(&ctrl);
+	return at + size;
 }
 
-void file::write(size_t size)
+off_t file::write(size_t size, off_t at)
 {
-	ctrl.aio_offset = pos;
+	ctrl.aio_offset = at;
 	ctrl.aio_buf = buf.get();
 	ctrl.aio_nbytes = size;
 	ctrl.aio_reqprio = 0;
 	ctrl.aio_sigevent.sigev_notify = SIGEV_NONE;
 	aio_write(&ctrl);
+	return at + size;
 }
 
 bool file::execute(std::chrono::milliseconds timeout_)
 {
-	int io_state = aio_error(&ctrl);
-	if (io_state == 0) {
-		pos += aio_return(&ctrl);
+	int status;
+
+	status = aio_error(&ctrl);
+	if (status == 0) {
 		return true;
-	} else if (io_state == EINPROGRESS) {
+	} else if (status == EINPROGRESS) {
 		auto cb_ptr = &ctrl;
 		timespec timeout{
 			.tv_sec=0,
 			.tv_nsec=timeout_.count() * 1'000'000l
 		};
-		int status = aio_suspend(&cb_ptr, 1, timeout_ != wait? &timeout: nullptr);
+		status = aio_suspend(&cb_ptr, 1, timeout_ != wait? &timeout: nullptr);
 		if (status == 0) {
-			pos += aio_return(&ctrl);
 			return true;
 		} else {
 			return false;

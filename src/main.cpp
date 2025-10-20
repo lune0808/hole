@@ -68,7 +68,7 @@ size_t npixels(chunk_info_t const &h)
 	return h.width * h.height * h.frame_count;
 }
 
-void issue_texture_dump(file *f, size_t count, GLuint chunk_name)
+off_t issue_texture_dump(file *f, size_t count, GLuint chunk_name, off_t addr)
 {
 	const chunk_t &chunk = f->buf;
 	const size_t size = count * sizeof(chunk[0]);
@@ -76,12 +76,12 @@ void issue_texture_dump(file *f, size_t count, GLuint chunk_name)
 	if (!success) {
 		std::printf("[io error] write\n");
 		// program should exit...
-		return;
+		return addr;
 	}
 	// this blocks until packing is done, also the floating point format is converted
 	// ideally we would keep floats and stream the texture using DSA
 	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, chunk.get());
-	f->write(size);
+	return f->write(size, addr);
 }
 
 void print_chunk(const std::uint32_t *buf, size_t count)
@@ -100,7 +100,7 @@ void print_chunk(const std::uint32_t *buf, size_t count)
 	std::printf("\n");
 }
 
-void issue_texture_load(file *f, chunk_info_t const &info, GLuint prev_chunk_name, size_t addr)
+void issue_texture_load(file *f, chunk_info_t const &info, GLuint chunk_name, size_t addr)
 {
 	auto success = f->execute(std::chrono::milliseconds{info.ms_per_frame});
 	if (!success) {
@@ -108,15 +108,14 @@ void issue_texture_load(file *f, chunk_info_t const &info, GLuint prev_chunk_nam
 		return;
 	}
 	std::uint32_t *buf = f->buf.get();
-	if (prev_chunk_name) {
-		glTextureSubImage3D(prev_chunk_name, 0 /* mipmap */,
+	if (chunk_name) {
+		glTextureSubImage3D(chunk_name, 0 /* mipmap */,
 			0, 0, 0, // offsets
 			info.width, info.height, info.frame_count, // dimensions
 			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
 	}
 	const size_t size = npixels(info) * sizeof(buf[0]);
-	f->pos = addr;
-	f->read(size);
+	f->read(size, addr);
 }
 
 struct draw_settings {
@@ -239,8 +238,8 @@ int main(int argc, char **argv)
 
 	chunk_info_t sim_repr;
 	if (mode == INPUT) {
-		file input{sim_path, file::mode_t::read, sizeof sim_repr};
-		input.read(sizeof sim_repr);
+		file input{sim_path, file::mode::read, sizeof sim_repr};
+		input.read(sizeof sim_repr, 0);
 		bool success = input.execute(file::wait);
 		if (!success) {
 			return 1;
@@ -268,9 +267,9 @@ int main(int argc, char **argv)
 	const auto quad_va = describe_va();
 
 	if (mode == OUTPUT) {
-		file output{sim_path, file::mode_t::write, chunk_frame_count * width * height};
+		file output{sim_path, file::mode::write, chunk_frame_count * width * height};
 		std::memcpy(output.buf.get(), &sim_repr, sizeof sim_repr);
-		output.write(sizeof sim_repr);
+		off_t write_addr = output.write(sizeof sim_repr, 0);
 
 		auto compute_src = load_file("src/compute.glsl");
 		const auto compute_shdr = build_shader(compute_src);
@@ -333,7 +332,7 @@ int main(int argc, char **argv)
 				// technically this only needs to wait for the request
 				// that was made for the previous issue with the same
 				// `buffer` index
-				issue_texture_dump(&output, pixels, sim[buffer]);
+				write_addr = issue_texture_dump(&output, pixels, sim[buffer], write_addr);
 			}
 
 			std::printf("\rframe #%zu", i_frame);
@@ -349,8 +348,8 @@ int main(int argc, char **argv)
 		sim_repr.width, sim_repr.height, chunk_frame_count, file::wait.count()
 	};
 	const size_t chunk_pixels = npixels(chunk);
-	file input{sim_path, file::mode_t::read, chunk_pixels};
-	input.read(sizeof sim_repr);
+	file input{sim_path, file::mode::read, chunk_pixels};
+	input.read(sizeof sim_repr, 0); // this should be memcpy'ing the result to sim_repr for mode==INPUT mainly
 	issue_texture_load(&input, chunk,      0, sizeof sim_repr);
 	issue_texture_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t));
 
