@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <fstream>
 #include <cstdint>
 #include <cstring>
 #include <thread>
@@ -8,7 +9,6 @@
 #include <glm/glm.hpp>
 #include "window.hpp"
 #include "shader.hpp"
-#include "async.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
@@ -93,38 +93,43 @@ void color_chunk(void *buf, size_t size, std::uint32_t color)
 	}
 }
 
-void complete_dump(file *f, file::request req)
+struct io_request
 {
-	auto success = f->execute(req, file::wait);
-	if (!success) {
+	void *buf;
+	size_t size;
+	off_t offset;
+};
+
+void complete_dump(std::ostream *f, io_request req)
+{
+	if (!(f->seekp(req.offset) && f->write(reinterpret_cast<char*>(req.buf), req.size))) {
 		std::printf("[io error] write\n");
 		// program should exit...
 	}
-	// std::printf("commit write @%zx ", req.aio_offset);
-	// print_chunk((std::uint32_t*) req.aio_buf, 16);
 }
 
-file::request issue_dump(file *f, size_t size, GLuint chunk_name, off_t addr, void *buf)
+io_request issue_dump(std::ostream *f, size_t size, GLuint chunk_name, off_t addr, void *buf)
 {
-	// this blocks until packing is done, also the floating point format is converted
-	// ideally we would keep floats and stream the texture using DSA
+#ifndef NDEBUG
 	color_chunk(buf, size, 0xffff00ffu);
-	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
-	return f->write(buf, size, addr);
+#endif
+	if (chunk_name) {
+		// this blocks until packing is done, also the floating point format is converted
+		// ideally we would keep floats and stream the texture using DSA
+		glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
+	}
+	return io_request{buf, size, addr};
 }
 
-void complete_load(file *f, file::request req)
+void complete_load(std::istream *f, io_request req)
 {
-	auto success = f->execute(req, file::wait);
-	if (!success) {
+	if (!(f->seekg(req.offset) && f->read(reinterpret_cast<char*>(req.buf), req.size))) {
 		std::printf("[io error] read\n");
 		return;
 	}
-	// std::printf("commit read @%zx ", req.aio_offset);
-	// print_chunk((std::uint32_t*) req.aio_buf, 16);
 }
 
-file::request issue_load(file *f, chunk_info_t const &info, GLuint chunk_name, size_t addr, void *buf)
+io_request issue_load(std::istream *f, chunk_info_t const &info, GLuint chunk_name, off_t addr, void *buf)
 {
 	if (chunk_name) {
 		glTextureSubImage3D(chunk_name, 0 /* mipmap */,
@@ -133,8 +138,10 @@ file::request issue_load(file *f, chunk_info_t const &info, GLuint chunk_name, s
 			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
 	}
 	const size_t size = npixels(info) * host_pixel_size;
+#ifndef NDEBUG
 	color_chunk(buf, size, 0x00ffffffu);
-	return f->read(buf, size, addr);
+#endif
+	return io_request{buf, size, addr};
 }
 
 struct draw_settings {
@@ -257,10 +264,8 @@ int main(int argc, char **argv)
 
 	chunk_info_t sim_repr;
 	if (mode == INPUT) {
-		file input{sim_path, file::mode::read, sizeof sim_repr};
-		auto rreq = input.read(&sim_repr, sizeof sim_repr, 0);
-		bool success = input.execute(rreq, file::wait);
-		if (!success) {
+		std::ifstream input{sim_path};
+		if (!input.read(reinterpret_cast<char*>(&sim_repr), sizeof sim_repr)) {
 			return 1;
 		}
 	} else {
@@ -285,8 +290,8 @@ int main(int argc, char **argv)
 	const auto quad_va = describe_va();
 
 	if (mode == OUTPUT) {
-		file output{sim_path, file::mode::write, chunk_frame_count * width * height};
-		auto wreq = output.write(&sim_repr, sizeof sim_repr, 0);
+		std::ofstream output{sim_path};
+		io_request wreq{&sim_repr, sizeof sim_repr, 0l};
 		off_t write_addr = sizeof sim_repr;
 
 		auto compute_src = load_file("src/compute.glsl");
@@ -367,14 +372,14 @@ int main(int argc, char **argv)
 	}
 
 	assert(sim_repr.frame_count > chunk_frame_count);
+	std::ifstream input{sim_path};
+	io_request rreq{&sim_repr, sizeof sim_repr, 0};
+	complete_load(&input, rreq);
 	chunk_info_t chunk{
-		sim_repr.width, sim_repr.height, chunk_frame_count, file::wait.count()
+		sim_repr.width, sim_repr.height, chunk_frame_count, sim_repr.ms_per_frame
 	};
 	const size_t chunk_pixels = npixels(chunk);
 	auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
-	file input{sim_path, file::mode::read, chunk_pixels};
-	auto rreq = input.read(&sim_repr, sizeof sim_repr, 0);
-	complete_load(&input, rreq);
 	rreq = issue_load(&input, chunk,      0, sizeof sim_repr, buf.get());
 	complete_load(&input, rreq);
 	rreq = issue_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t), buf.get());
