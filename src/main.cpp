@@ -377,8 +377,7 @@ int main(int argc, char **argv)
 		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_DYNAMIC_DRAW);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
-		glUseProgram(compute_shdr);
-		glUniform1i(2 /* skybox */, 2 /* GL_TEXTURE2 */);
+		glProgramUniform1i(compute_shdr, 2 /* skybox */, 2 /* GL_TEXTURE2 */);
 
 		const GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
 		const GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
@@ -389,17 +388,18 @@ int main(int argc, char **argv)
 		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 			const GLuint buffer = (i_frame / chunk_frame_count) % 2;
 			const GLuint frame_index = i_frame % chunk_frame_count;
-			glUseProgram(compute_shdr);
-			enable_sim_frame(0, sim[buffer], frame_index, GL_RGBA32F);
-			float progress = float(i_frame) / float(n_frames-1);
-			progress = smoothstep(progress);
+			float progress = smoothstep(float(i_frame) / float(n_frames-1));
 			const float angle = glm::mix(start_angle, end_angle, progress);
 			data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * Y, std::cos(angle * 0.5f)};
 			data.cam_pos = glm::mix(start_pos, end_pos, progress);
 			data.sch_radius = glm::mix(start_sch_r, end_sch_r, progress);
+
+			glUseProgram(compute_shdr);
+			enable_sim_frame(0, sim[buffer], frame_index, GL_RGBA32F);
 			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 			glDispatchCompute(compute_width, compute_height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+
 			draw_settings set{
 				graphics_shdr, quad_va,
 				1, float(frame_index),
