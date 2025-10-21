@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <atomic>
 #include <fstream>
 #include <cstdint>
 #include <cstring>
@@ -100,48 +101,97 @@ struct io_request
 	off_t offset;
 };
 
-void complete_dump(std::ostream *f, io_request req)
+enum class io_work_type { none = 0, open_read, open_write, read, write, exit };
+static std::atomic<io_work_type> current_io_work_type;
+static io_request current_io_request;
+
+static constexpr auto poll_period = 100ms;
+
+void io_worker(std::atomic<io_work_type> *type)
 {
-	if (!(f->seekp(req.offset) && f->write(reinterpret_cast<char*>(req.buf), req.size))) {
-		std::printf("[io error] write\n");
-		// program should exit...
+	std::ofstream os;
+	std::ifstream is;
+	for (;;) {
+		auto t = type->load(std::memory_order_acquire);
+		auto req = current_io_request;
+		auto buf = reinterpret_cast<char*>(req.buf);
+		switch (t) {
+		case io_work_type::none:
+			std::this_thread::sleep_for(poll_period);
+			continue;
+		case io_work_type::open_write:
+			os = std::ofstream(buf);
+			break;
+		case io_work_type::open_read:
+			is = std::ifstream(buf);
+			break;
+		case io_work_type::write:
+			if (!(os.seekp(req.offset) && os.write(buf, req.size))) {
+				std::printf("[io error] write\n");
+				std::memset(buf, 'W' /* 0x57 */, req.size);
+			}
+			break;
+		case io_work_type::read:
+			if (!(is.seekg(req.offset) && is.read(buf, req.size))) {
+				std::printf("[io error] read\n");
+				std::memset(buf, 'R' /* 0x52 */, req.size);
+			}
+			break;
+		case io_work_type::exit:
+			return;
+		}
+		type->store(io_work_type::none, std::memory_order_release);
 	}
 }
 
-io_request issue_dump(std::ostream *f, size_t size, GLuint chunk_name, off_t addr, void *buf)
+io_request issue_io_request(io_work_type type, void *buf, size_t size, off_t addr)
 {
-#ifndef NDEBUG
-	color_chunk(buf, size, 0xffff00ffu);
-#endif
-	if (chunk_name) {
-		// this blocks until packing is done, also the floating point format is converted
-		// ideally we would keep floats and stream the texture using DSA
-		glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
-	}
-	return io_request{buf, size, addr};
+	io_request req = io_request{buf, size, addr};
+	current_io_request = req;
+	current_io_work_type.store(type, std::memory_order_release);
+	return req;
 }
 
-void complete_load(std::istream *f, io_request req)
+io_request issue_open(io_work_type type, const char *path)
 {
-	if (!(f->seekg(req.offset) && f->read(reinterpret_cast<char*>(req.buf), req.size))) {
-		std::printf("[io error] read\n");
+	return issue_io_request(type, const_cast<char*>(path), 1 /* 0 means do nothing */, 0);
+}
+
+void complete_io_request(io_request req)
+{
+	if (req.size == 0) {
 		return;
 	}
+	while (current_io_work_type.load(std::memory_order_acquire) != io_work_type::none) {
+		std::this_thread::sleep_for(poll_period);
+	}
 }
 
-io_request issue_load(std::istream *f, chunk_info_t const &info, GLuint chunk_name, off_t addr, void *buf)
+void complete_dump(io_request req)
 {
-	if (chunk_name) {
-		glTextureSubImage3D(chunk_name, 0 /* mipmap */,
-			0, 0, 0, // offsets
-			info.width, info.height, info.frame_count, // dimensions
-			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
-	}
-	const size_t size = npixels(info) * host_pixel_size;
-#ifndef NDEBUG
-	color_chunk(buf, size, 0x00ffffffu);
-#endif
-	return io_request{buf, size, addr};
+	complete_io_request(req);
+}
+
+io_request issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
+{
+	// this blocks until packing is done, also the floating point format is converted
+	// ideally we would keep floats and stream the texture using DSA
+	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
+	return issue_io_request(io_work_type::write, buf, size, addr);
+}
+
+void complete_load(io_request req, chunk_info_t const &info, GLuint chunk_name)
+{
+	complete_io_request(req);
+	glTextureSubImage3D(chunk_name, 0 /* mipmap */,
+		0, 0, 0, // offsets
+		info.width, info.height, info.frame_count, // dimensions
+		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, req.buf);
+}
+
+io_request issue_load(void *buf, size_t size, off_t addr)
+{
+	return issue_io_request(io_work_type::read, buf, size, addr);
 }
 
 struct draw_settings {
@@ -288,10 +338,12 @@ int main(int argc, char **argv)
 	}
 
 	const auto quad_va = describe_va();
+	std::jthread io(io_worker, &current_io_work_type);
 
 	if (mode == OUTPUT) {
-		std::ofstream output{sim_path};
-		io_request wreq{&sim_repr, sizeof sim_repr, 0l};
+		auto wreq = issue_open(io_work_type::open_write, sim_path);
+		complete_io_request(wreq);
+		wreq = issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
 		off_t write_addr = sizeof sim_repr;
 
 		auto compute_src = load_file("src/compute.glsl");
@@ -358,8 +410,8 @@ int main(int argc, char **argv)
 				// technically this only needs to wait for the request
 				// that was made for the previous issue with the same
 				// `buffer` index
-				complete_dump(&output, wreq);
-				wreq = issue_dump(&output, chunk_size, sim[buffer], write_addr, buf.get());
+				complete_dump(wreq);
+				wreq = issue_dump(chunk_size, sim[buffer], write_addr, buf.get());
 				write_addr += chunk_size;
 			}
 
@@ -368,51 +420,51 @@ int main(int argc, char **argv)
 		}
 		std::printf("\r                 \r");
 		// push the last issue
-		complete_dump(&output, wreq);
+		complete_dump(wreq);
 	}
 
-	assert(sim_repr.frame_count > chunk_frame_count);
-	std::ifstream input{sim_path};
-	io_request rreq{&sim_repr, sizeof sim_repr, 0};
-	complete_load(&input, rreq);
-	chunk_info_t chunk{
-		sim_repr.width, sim_repr.height, chunk_frame_count, sim_repr.ms_per_frame
-	};
-	const size_t chunk_pixels = npixels(chunk);
-	auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
-	rreq = issue_load(&input, chunk,      0, sizeof sim_repr, buf.get());
-	complete_load(&input, rreq);
-	rreq = issue_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t), buf.get());
-
-	GLuint prev_chunk_index = 0;
-	for (GLuint frame = 0; win; ++frame) {
-		const GLuint frame_index = back_and_forth(frame, sim_repr.frame_count-1);
-		const GLuint chunk_index = frame_index / chunk_frame_count;
-		const GLuint buffer = chunk_index % 2;
-		const GLuint buffer_index = frame_index % chunk_frame_count;
-		draw_settings set{
-			graphics_shdr, quad_va,
-			1, float(buffer_index),
-			0, buffer,
+	if (win) {
+		assert(sim_repr.frame_count > chunk_frame_count);
+		auto rreq = issue_open(io_work_type::open_read, sim_path);
+		complete_io_request(rreq);
+		rreq = issue_io_request(io_work_type::read, &sim_repr, sizeof sim_repr, 0);
+		complete_io_request(rreq);
+		chunk_info_t chunk{
+			sim_repr.width, sim_repr.height, chunk_frame_count, sim_repr.ms_per_frame
 		};
-		if (chunk_index != prev_chunk_index) {
-			const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
-			const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
-			assert(next_chunk_index == chunk_index+1 || next_chunk_index == chunk_index-1);
-			complete_load(&input, rreq);
-			rreq = issue_load(
-				&input,
-				chunk,
-				sim[buffer],
-				sizeof sim_repr + next_chunk_index * chunk_pixels * sizeof(std::uint32_t),
-				buf.get()
-			);
-		}
-		prev_chunk_index = chunk_index;
+		const size_t chunk_pixels = npixels(chunk);
+		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
+		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
+		rreq = issue_load(buf.get(), chunk_size, sizeof sim_repr);
+		complete_load(rreq, chunk, sim[0]);
+		rreq = issue_load(buf.get(), chunk_size, sizeof sim_repr + chunk_size);
 
-		draw_quad(set);
-		win.draw();
-		std::this_thread::sleep_for(frame_time);
+		GLuint prev_chunk_index = 0;
+		for (GLuint frame = 0; win; ++frame) {
+			const GLuint frame_index = back_and_forth(frame, sim_repr.frame_count-1);
+			const GLuint chunk_index = frame_index / chunk_frame_count;
+			const GLuint buffer = chunk_index % 2;
+			const GLuint buffer_index = frame_index % chunk_frame_count;
+			draw_settings set{
+				graphics_shdr, quad_va,
+					1, float(buffer_index),
+					0, buffer,
+			};
+			if (chunk_index != prev_chunk_index) {
+				const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
+				const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
+				assert(next_chunk_index == chunk_index+1 || next_chunk_index == chunk_index-1);
+				complete_load(rreq, chunk, sim[buffer]);
+				rreq = issue_load(buf.get(), chunk_size, sizeof sim_repr + next_chunk_index * chunk_size);
+			}
+			prev_chunk_index = chunk_index;
+
+			draw_quad(set);
+			win.draw();
+			std::this_thread::sleep_for(frame_time);
+		}
 	}
+
+	issue_io_request(io_work_type::exit, nullptr, 0, 0);
 }
 
