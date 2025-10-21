@@ -443,6 +443,7 @@ int main(int argc, char **argv)
 
 		GLuint prev_chunk_index = 0;
 		for (GLuint frame = 0; win; ++frame) {
+			auto frame_start_time = std::chrono::steady_clock::now();
 			const GLuint frame_index = back_and_forth(frame, sim_repr.frame_count-1);
 			const GLuint chunk_index = frame_index / chunk_frame_count;
 			const GLuint buffer = chunk_index % 2;
@@ -463,7 +464,7 @@ int main(int argc, char **argv)
 
 			draw_quad(set);
 			win.draw();
-			std::this_thread::sleep_for(frame_time);
+			std::this_thread::sleep_until(frame_start_time + frame_time);
 		}
 	}
 
