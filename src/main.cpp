@@ -1,4 +1,6 @@
 #include <cstdio>
+#include <atomic>
+#include <fstream>
 #include <cstdint>
 #include <cstring>
 #include <thread>
@@ -10,6 +12,10 @@
 #include "shader.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
+
+using namespace std::chrono_literals;
+
+static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
 struct camera_t
 {
@@ -24,7 +30,6 @@ static const float quad[] = {
 	-1.0f, -1.0f,
 	+1.0f, -1.0f,
 	-1.0f, +1.0f,
-
 	-1.0f, +1.0f,
 	+1.0f, -1.0f,
 	+1.0f, +1.0f,
@@ -52,68 +57,141 @@ static float smoothstep(float x)
 	return 3.0f * x * x - 2.0f * x * x * x;
 }
 
-struct dump_t {
-	struct {
-		std::int32_t width;
-		std::int32_t height;
-		std::int32_t frame_count;
-		std::int32_t ms_per_frame;
-	} header;
-	std::unique_ptr<std::uint32_t[]> data;
+struct chunk_info_t {
+	std::uint32_t width;
+	std::uint32_t height;
+	std::uint32_t frame_count;
+	std::uint32_t ms_per_frame;
 };
 
-size_t npixels(dump_t const &d)
+using chunk_t = std::unique_ptr<std::uint32_t[]>;
+
+size_t npixels(chunk_info_t const &h)
 {
-	return d.header.width * d.header.height * d.header.frame_count;
+	return h.width * h.height * h.frame_count;
 }
 
-dump_t dump(int width, int height, int frames, std::chrono::milliseconds dt, GLuint gl_name)
+void print_chunk(const std::uint32_t *buf, size_t count)
 {
-	dump_t d;
-	d.header.width = width;
-	d.header.height = height;
-	d.header.frame_count = frames;
-	d.header.ms_per_frame = dt.count();
-	size_t count = npixels(d);
-	d.data = std::make_unique<std::uint32_t[]>(count);
-	glGetTextureImage(gl_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, count * sizeof(d.data[0]), d.data.get());
-	return d;
-}
-
-int to_file(dump_t const &d, const char *path)
-{
-	const size_t pix = npixels(d);
-	std::FILE *file = std::fopen(path, "w");
-	if (!file) {
-		return 1;
+	std::printf("chunk:");
+	static constexpr std::uint32_t ff = 0xff;
+	for (size_t w = 0; w < count; ++w) {
+		std::printf("%c%02x %02x %02x %02x",
+			(w % 4 == 0) ? '\n': ' ',
+			(buf[w] >>  0) & ff,
+			(buf[w] >>  8) & ff,
+			(buf[w] >> 16) & ff,
+			(buf[w] >> 24) & ff
+		);
 	}
-	std::fwrite(&d.header, sizeof(d.header), 1, file);
-	std::fwrite(d.data.get(), sizeof(std::uint32_t), pix, file);
-	std::fclose(file);
-	return 0;
+	std::printf("\n");
 }
 
-dump_t from_file(const char *path)
+void color_chunk(void *buf, size_t size, std::uint32_t color)
 {
-		dump_t d;
-		std::FILE *file = std::fopen(path, "r");
-		if (!file) {
-			return d;
+	for (size_t i = 0; i < size/host_pixel_size; ++i) {
+		((std::uint32_t*) buf)[i] = color;
+	}
+}
+
+struct io_request
+{
+	void *buf;
+	size_t size;
+	off_t offset;
+};
+
+enum class io_work_type { none = 0, open_read, open_write, read, write, exit };
+static std::atomic<io_work_type> current_io_work_type;
+static io_request current_io_request;
+
+static constexpr auto poll_period = 100ms;
+
+void io_worker(std::atomic<io_work_type> *type)
+{
+	std::ofstream os;
+	std::ifstream is;
+	for (;;) {
+		auto t = type->load(std::memory_order_acquire);
+		auto req = current_io_request;
+		auto buf = reinterpret_cast<char*>(req.buf);
+		switch (t) {
+		case io_work_type::none:
+			std::this_thread::sleep_for(poll_period);
+			continue;
+		case io_work_type::open_write:
+			os = std::ofstream(buf);
+			break;
+		case io_work_type::open_read:
+			is = std::ifstream(buf);
+			break;
+		case io_work_type::write:
+			if (!(os.seekp(req.offset) && os.write(buf, req.size))) {
+				std::printf("[io error] write\n");
+				std::memset(buf, 'W' /* 0x57 */, req.size);
+			}
+			break;
+		case io_work_type::read:
+			if (!(is.seekg(req.offset) && is.read(buf, req.size))) {
+				std::printf("[io error] read\n");
+				std::memset(buf, 'R' /* 0x52 */, req.size);
+			}
+			break;
+		case io_work_type::exit:
+			return;
 		}
-		std::fread(&d.header, sizeof(d.header), 1, file);
-		const size_t count = npixels(d);
-		d.data = std::make_unique<std::uint32_t[]>(count);
-		std::fread(d.data.get(), sizeof(std::uint32_t), count, file);
-		std::fclose(file);
-		return d;
+		type->store(io_work_type::none, std::memory_order_release);
+	}
 }
 
-void upload(dump_t const &d, GLuint gl_name)
+io_request issue_io_request(io_work_type type, void *buf, size_t size, off_t addr)
 {
-	glTextureSubImage3D(gl_name, 0 /* mipmap */,
-		0, 0, 0, // x,y,z offsets
-		d.header.width, d.header.height, d.header.frame_count, // x,y,z dimensions
-		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, d.data.get());
+	io_request req = io_request{buf, size, addr};
+	current_io_request = req;
+	current_io_work_type.store(type, std::memory_order_release);
+	return req;
+}
+
+io_request issue_open(io_work_type type, const char *path)
+{
+	return issue_io_request(type, const_cast<char*>(path), 1 /* 0 means do nothing */, 0);
+}
+
+void complete_io_request(io_request req)
+{
+	if (req.size == 0) {
+		return;
+	}
+	while (current_io_work_type.load(std::memory_order_acquire) != io_work_type::none) {
+		std::this_thread::sleep_for(poll_period);
+	}
+}
+
+void complete_dump(io_request req)
+{
+	complete_io_request(req);
+}
+
+io_request issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
+{
+	// this blocks until packing is done, also the floating point format is converted
+	// ideally we would keep floats and stream the texture using DSA
+	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
+	return issue_io_request(io_work_type::write, buf, size, addr);
+}
+
+void complete_load(io_request req, chunk_info_t const &info, GLuint chunk_name)
+{
+	complete_io_request(req);
+	glTextureSubImage3D(chunk_name, 0 /* mipmap */,
+		0, 0, 0, // offsets
+		info.width, info.height, info.frame_count, // dimensions
+		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, req.buf);
+}
+
+io_request issue_load(void *buf, size_t size, off_t addr)
+{
+	return issue_io_request(io_work_type::read, buf, size, addr);
 }
 
 struct draw_settings {
@@ -121,32 +199,18 @@ struct draw_settings {
 	GLuint quad_va;
 	GLuint frame_location;
 	float frame_value;
+	GLuint screen_location;
+	GLuint screen_value;
 };
 
 void draw_quad(draw_settings set)
 {
 	glUseProgram(set.shader);
 	glUniform1f(set.frame_location, set.frame_value);
+	glUniform1i(set.screen_location, set.screen_value);
 	glBindVertexArray(set.quad_va);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 }
-
-struct back_and_forth {
-	size_t cur;
-	size_t max;
-	size_t step;
-
-	back_and_forth(size_t max): cur{0}, max{max-1}, step(1) {}
-
-	size_t advance()
-	{
-		cur += step;
-		if (0 == cur || cur == max) {
-			step = -step;
-		}
-		return cur;
-	}
-};
 
 GLuint graphics_shader(const char *vpath, const char *fpath)
 {
@@ -175,9 +239,68 @@ static constexpr int default_width = 800;
 static constexpr int default_height = 600;
 static constexpr size_t default_frames = 48;
 static constexpr size_t default_frame_time = 5000 / default_frames;
-static constexpr size_t default_iterations = 768;
-
 static constexpr GLuint compute_local_dim = 4;
+static constexpr size_t default_iterations = 96;
+static constexpr size_t chunk_frame_count = 16;
+
+GLuint load_skybox(GLenum unit, const char *path_fmt)
+{
+	GLuint tex;
+	glGenTextures(1, &tex);
+	glActiveTexture(unit);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+	const char *replacement[6] = { "right", "left", "top", "bottom", "front", "back" };
+	static constexpr size_t bufsize = 128;
+	char buf[bufsize];
+	for (size_t face = 0; face < std::size(replacement); ++face) {
+		int width;
+		int height;
+		int channels;
+		std::snprintf(buf, bufsize, path_fmt, replacement[face]);
+		auto data = stbi_load(buf, &width, &height, &channels, 4);
+		assert(data);
+		glTexImage2D(
+			GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+			0 /* mipmap */, GL_RGBA,
+			width, height,
+			0, GL_RGBA, GL_UNSIGNED_BYTE, data
+		);
+		stbi_image_free(data);
+	}
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	return tex;
+}
+
+GLuint texture_array(GLenum unit, GLenum format, size_t width, size_t height, size_t depth)
+{
+	GLuint tex;
+	glGenTextures(1, &tex);
+	glActiveTexture(unit);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1 /* mipmap */, format, width, height, depth);
+	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	return tex;
+}
+
+void enable_sim_frame(GLuint binding, GLuint texture, size_t index, GLenum format)
+{
+	glBindImageTexture(binding, texture, 0, GL_FALSE, index, GL_WRITE_ONLY, format);
+}
+
+GLuint back_and_forth(GLuint index_, GLuint max_value_)
+{
+	int index = index_;
+	int max_value = max_value_;
+	return max_value - std::abs(index % (2 * max_value) - max_value);
+}
 
 int main(int argc, char **argv)
 {
@@ -190,68 +313,45 @@ int main(int argc, char **argv)
 		mode = INPUT;
 	}
 
-	dump_t sim_repr;
+	chunk_info_t sim_repr;
 	if (mode == INPUT) {
-		sim_repr = from_file(sim_path);
-		assert(sim_repr.data);
+		std::ifstream input{sim_path};
+		if (!input.read(reinterpret_cast<char*>(&sim_repr), sizeof sim_repr)) {
+			return 1;
+		}
+	} else {
+		sim_repr.width = default_width;
+		sim_repr.height = default_height;
+		sim_repr.frame_count = default_frames;
+		sim_repr.ms_per_frame = default_frame_time;
 	}
-
-	const int width = (mode == OUTPUT)? default_width: sim_repr.header.width;
-	const int height = (mode == OUTPUT)? default_height: sim_repr.header.height;
+	const int width = sim_repr.width;
+	const int height = sim_repr.height;
 	window win(width, height); // context creation, etc
 	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
-	const size_t n_frames = (mode == OUTPUT)? default_frames: sim_repr.header.frame_count;
+	const size_t n_frames = sim_repr.frame_count;
+	const std::chrono::milliseconds frame_time{sim_repr.ms_per_frame};
 
-	GLuint sim;
-	glGenTextures(1, &sim);
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D_ARRAY, sim);
-	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA32F, width, height, n_frames);
-	glUseProgram(graphics_shdr);
-	glUniform1i(0 /* graphics binding for screen */, 1 /* GL_TEXTURE1 */);
+	GLuint sim[2];
+	sim[0] = texture_array(GL_TEXTURE0, GL_RGBA32F, width, height, chunk_frame_count);
+	if (n_frames > chunk_frame_count) {
+		sim[1] = texture_array(GL_TEXTURE1, GL_RGBA32F, width, height, chunk_frame_count);
+	}
 
 	const auto quad_va = describe_va();
-
-	using namespace std::chrono_literals;
-	const std::chrono::milliseconds frame_time{
-		(mode == OUTPUT)? default_frame_time: sim_repr.header.ms_per_frame
-	};
+	std::jthread io(io_worker, &current_io_work_type);
 
 	if (mode == OUTPUT) {
+		auto wreq = issue_open(io_work_type::open_write, sim_path);
+		complete_io_request(wreq);
+		wreq = issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
+		off_t write_addr = sizeof sim_repr;
+
 		auto compute_src = load_file("src/compute.glsl");
 		const auto compute_shdr = build_shader(compute_src);
 		delete[] compute_src;
 
-		GLuint skybox;
-		glGenTextures(1, &skybox);
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_CUBE_MAP, skybox);
-		static const char *const skybox_paths[6] = {
-			"res/sky_right.png",
-			"res/sky_left.png",
-			"res/sky_top.png",
-			"res/sky_bottom.png",
-			"res/sky_front.png",
-			"res/sky_back.png",
-		};
-		for (size_t i = 0; i < std::size(skybox_paths); ++i) {
-			int face_width, face_height, face_channels;
-			auto face = stbi_load(skybox_paths[i], &face_width, &face_height, &face_channels, 0);
-			assert(face);
-			static const GLenum formats[] = {
-				GL_RED, GL_RG, GL_RGB, GL_RGBA,
-			};
-			assert(0 <= face_channels && face_channels <= std::size(formats));
-			const auto format = formats[face_channels-1];
-			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-					0, format, face_width, face_height, 0, format, GL_UNSIGNED_BYTE, face);
-			stbi_image_free(face);
-		}
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+		GLuint skybox = load_skybox(GL_TEXTURE2, "res/sky_%s.png");
 
 		struct
 		{
@@ -278,44 +378,95 @@ int main(int argc, char **argv)
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
 		glUseProgram(compute_shdr);
-		glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
+		glUniform1i(2 /* skybox */, 2 /* GL_TEXTURE2 */);
 
 		const GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
 		const GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
-
+		const size_t chunk_pixels = width * height * chunk_frame_count;
+		const size_t chunk_size = chunk_pixels * host_pixel_size;
+		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
+		// n_frames should always be a multiple of chunk_frame_count
 		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
-			glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
+			const GLuint buffer = (i_frame / chunk_frame_count) % 2;
+			const GLuint frame_index = i_frame % chunk_frame_count;
 			glUseProgram(compute_shdr);
+			enable_sim_frame(0, sim[buffer], frame_index, GL_RGBA32F);
 			float progress = float(i_frame) / float(n_frames-1);
 			progress = smoothstep(progress);
-			float angle = glm::mix(start_angle, end_angle, progress);
+			const float angle = glm::mix(start_angle, end_angle, progress);
 			data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * Y, std::cos(angle * 0.5f)};
 			data.cam_pos = glm::mix(start_pos, end_pos, progress);
 			data.sch_radius = glm::mix(start_sch_r, end_sch_r, progress);
 			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 			glDispatchCompute(compute_width, compute_height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
-			draw_settings set{graphics_shdr, quad_va, 1, float(i_frame)};
+			draw_settings set{
+				graphics_shdr, quad_va,
+				1, float(frame_index),
+				0, buffer,
+			};
 			draw_quad(set);
 			win.draw();
+
+			if (frame_index == chunk_frame_count-1) {
+				// technically this only needs to wait for the request
+				// that was made for the previous issue with the same
+				// `buffer` index
+				complete_dump(wreq);
+				wreq = issue_dump(chunk_size, sim[buffer], write_addr, buf.get());
+				write_addr += chunk_size;
+			}
 
 			std::printf("\rframe #%zu", i_frame);
 			std::fflush(stdout);
 		}
 		std::printf("\r                 \r");
-
-		sim_repr = dump(width, height, n_frames, frame_time, sim);
-		int error = to_file(sim_repr, sim_path);
-		assert(!error);
-	} else {
-		upload(std::move(sim_repr), sim);
+		// push the last issue
+		complete_dump(wreq);
 	}
 
-	for (back_and_forth counter(n_frames); win; counter.advance()) {
-		draw_settings set{graphics_shdr, quad_va, 1, float(counter.cur)};
-		draw_quad(set);
-		win.draw();
-		std::this_thread::sleep_for(frame_time);
+	if (win) {
+		assert(sim_repr.frame_count > chunk_frame_count);
+		auto rreq = issue_open(io_work_type::open_read, sim_path);
+		complete_io_request(rreq);
+		rreq = issue_io_request(io_work_type::read, &sim_repr, sizeof sim_repr, 0);
+		complete_io_request(rreq);
+		chunk_info_t chunk{
+			sim_repr.width, sim_repr.height, chunk_frame_count, sim_repr.ms_per_frame
+		};
+		const size_t chunk_pixels = npixels(chunk);
+		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
+		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
+		rreq = issue_load(buf.get(), chunk_size, sizeof sim_repr);
+		complete_load(rreq, chunk, sim[0]);
+		rreq = issue_load(buf.get(), chunk_size, sizeof sim_repr + chunk_size);
+
+		GLuint prev_chunk_index = 0;
+		for (GLuint frame = 0; win; ++frame) {
+			const GLuint frame_index = back_and_forth(frame, sim_repr.frame_count-1);
+			const GLuint chunk_index = frame_index / chunk_frame_count;
+			const GLuint buffer = chunk_index % 2;
+			const GLuint buffer_index = frame_index % chunk_frame_count;
+			draw_settings set{
+				graphics_shdr, quad_va,
+					1, float(buffer_index),
+					0, buffer,
+			};
+			if (chunk_index != prev_chunk_index) {
+				const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
+				const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
+				assert(next_chunk_index == chunk_index+1 || next_chunk_index == chunk_index-1);
+				complete_load(rreq, chunk, sim[buffer]);
+				rreq = issue_load(buf.get(), chunk_size, sizeof sim_repr + next_chunk_index * chunk_size);
+			}
+			prev_chunk_index = chunk_index;
+
+			draw_quad(set);
+			win.draw();
+			std::this_thread::sleep_for(frame_time);
+		}
 	}
+
+	issue_io_request(io_work_type::exit, nullptr, 0, 0);
 }
 
