@@ -14,6 +14,8 @@
 
 using namespace std::chrono_literals;
 
+static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
+
 struct camera_t
 {
 	float fov;
@@ -68,22 +70,6 @@ size_t npixels(chunk_info_t const &h)
 	return h.width * h.height * h.frame_count;
 }
 
-off_t issue_texture_dump(file *f, size_t count, GLuint chunk_name, off_t addr)
-{
-	const chunk_t &chunk = f->buf;
-	const size_t size = count * sizeof(chunk[0]);
-	auto success = f->execute(file::wait);
-	if (!success) {
-		std::printf("[io error] write\n");
-		// program should exit...
-		return addr;
-	}
-	// this blocks until packing is done, also the floating point format is converted
-	// ideally we would keep floats and stream the texture using DSA
-	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, chunk.get());
-	return f->write(size, addr);
-}
-
 void print_chunk(const std::uint32_t *buf, size_t count)
 {
 	std::printf("chunk:");
@@ -100,21 +86,41 @@ void print_chunk(const std::uint32_t *buf, size_t count)
 	std::printf("\n");
 }
 
-void issue_texture_load(file *f, chunk_info_t const &info, GLuint chunk_name, size_t addr)
+void complete_texture_dump(file *f)
 {
-	auto success = f->execute(std::chrono::milliseconds{info.ms_per_frame});
+	auto success = f->execute(file::wait);
+	if (!success) {
+		std::printf("[io error] write\n");
+		// program should exit...
+	}
+}
+
+off_t issue_texture_dump(file *f, size_t size, GLuint chunk_name, off_t addr, void *buf)
+{
+	// this blocks until packing is done, also the floating point format is converted
+	// ideally we would keep floats and stream the texture using DSA
+	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
+	return f->write(size, addr);
+}
+
+void complete_texture_load(file *f)
+{
+	auto success = f->execute(file::wait);
 	if (!success) {
 		std::printf("[io error] read\n");
 		return;
 	}
-	std::uint32_t *buf = f->buf.get();
+}
+
+void issue_texture_load(file *f, chunk_info_t const &info, GLuint chunk_name, size_t addr, void *buf)
+{
 	if (chunk_name) {
 		glTextureSubImage3D(chunk_name, 0 /* mipmap */,
 			0, 0, 0, // offsets
 			info.width, info.height, info.frame_count, // dimensions
 			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
 	}
-	const size_t size = npixels(info) * sizeof(buf[0]);
+	const size_t size = npixels(info) * host_pixel_size;
 	f->read(size, addr);
 }
 
@@ -329,10 +335,12 @@ int main(int argc, char **argv)
 
 			if (frame_index == chunk_frame_count-1) {
 				const size_t pixels = width * height * chunk_frame_count;
+				const size_t chunk_size = pixels * host_pixel_size;
 				// technically this only needs to wait for the request
 				// that was made for the previous issue with the same
 				// `buffer` index
-				write_addr = issue_texture_dump(&output, pixels, sim[buffer], write_addr);
+				complete_texture_dump(&output);
+				write_addr = issue_texture_dump(&output, chunk_size, sim[buffer], write_addr, output.buf.get());
 			}
 
 			std::printf("\rframe #%zu", i_frame);
@@ -340,7 +348,7 @@ int main(int argc, char **argv)
 		}
 		std::printf("\r                 \r");
 		// push the last issue
-		output.execute(file::wait);
+		complete_texture_dump(&output);
 	}
 
 	assert(sim_repr.frame_count > chunk_frame_count);
@@ -350,8 +358,10 @@ int main(int argc, char **argv)
 	const size_t chunk_pixels = npixels(chunk);
 	file input{sim_path, file::mode::read, chunk_pixels};
 	input.read(sizeof sim_repr, 0); // this should be memcpy'ing the result to sim_repr for mode==INPUT mainly
-	issue_texture_load(&input, chunk,      0, sizeof sim_repr);
-	issue_texture_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t));
+	complete_texture_load(&input);
+	issue_texture_load(&input, chunk,      0, sizeof sim_repr, input.buf.get());
+	complete_texture_load(&input);
+	issue_texture_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t), input.buf.get());
 
 	GLuint prev_chunk_index = 0;
 	for (GLuint frame = 0; win; ++frame) {
@@ -368,8 +378,14 @@ int main(int argc, char **argv)
 			const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
 			const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
 			assert(next_chunk_index == chunk_index+1 || next_chunk_index == chunk_index-1);
-			issue_texture_load /* and finish pending load */
-				(&input, chunk, sim[buffer], sizeof sim_repr + next_chunk_index * chunk_pixels * sizeof(std::uint32_t));
+			complete_texture_load(&input);
+			issue_texture_load(
+				&input,
+				chunk,
+				sim[buffer],
+				sizeof sim_repr + next_chunk_index * chunk_pixels * sizeof(std::uint32_t),
+				input.buf.get()
+			);
 		}
 		prev_chunk_index = chunk_index;
 

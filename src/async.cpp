@@ -31,7 +31,9 @@ file::file(const char *path, mode m, size_t count)
 
 file::~file()
 {
-	close(ctrl.aio_fildes);
+	int fd = ctrl.aio_fildes;
+	fsync(fd);
+	close(fd);
 }
 
 off_t file::read(size_t size, off_t at)
