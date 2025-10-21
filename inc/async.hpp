@@ -7,7 +7,15 @@
 
 struct file
 {
-	struct request : public aiocb {};
+	struct request : public aiocb
+	{
+		bool is_read;
+
+		int fd() const { return aio_fildes; }
+		size_t size() const { return aio_nbytes; }
+		off_t addr() const { return aio_offset; }
+		void *buf() const { return const_cast<void*>(aio_buf); }
+	};
 
 	int fd;
 

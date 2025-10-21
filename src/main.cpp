@@ -323,6 +323,7 @@ int main(int argc, char **argv)
 		glUniform1i(2 /* skybox */, 2 /* GL_TEXTURE2 */);
 
 		const size_t chunk_pixels = width * height * chunk_frame_count;
+		const size_t chunk_size = chunk_pixels * host_pixel_size;
 		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
 
 		// n_frames should always be a multiple of chunk_frame_count
@@ -349,8 +350,6 @@ int main(int argc, char **argv)
 			win.draw();
 
 			if (frame_index == chunk_frame_count-1) {
-				const size_t pixels = width * height * chunk_frame_count;
-				const size_t chunk_size = pixels * host_pixel_size;
 				// technically this only needs to wait for the request
 				// that was made for the previous issue with the same
 				// `buffer` index
