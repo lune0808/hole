@@ -175,7 +175,9 @@ static constexpr int default_width = 800;
 static constexpr int default_height = 600;
 static constexpr size_t default_frames = 48;
 static constexpr size_t default_frame_time = 5000 / default_frames;
-static constexpr size_t default_iterations = 256;
+static constexpr size_t default_iterations = 768;
+
+static constexpr GLuint compute_local_dim = 4;
 
 int main(int argc, char **argv)
 {
@@ -278,6 +280,9 @@ int main(int argc, char **argv)
 		glUseProgram(compute_shdr);
 		glUniform1i(2 /* skybox */, 0 /* GL_TEXTURE0 */);
 
+		const GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
+		const GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
+
 		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 			glBindImageTexture(0 /* cs binding */, sim, 0, GL_FALSE, i_frame, GL_WRITE_ONLY, GL_RGBA32F);
 			glUseProgram(compute_shdr);
@@ -288,7 +293,7 @@ int main(int argc, char **argv)
 			data.cam_pos = glm::mix(start_pos, end_pos, progress);
 			data.sch_radius = glm::mix(start_sch_r, end_sch_r, progress);
 			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
-			glDispatchCompute(width, height, 1);
+			glDispatchCompute(compute_width, compute_height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 			draw_settings set{graphics_shdr, quad_va, 1, float(i_frame)};
 			draw_quad(set);
