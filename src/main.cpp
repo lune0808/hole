@@ -235,12 +235,12 @@ static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
 static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
 static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
 
-static constexpr int default_width = 800;
-static constexpr int default_height = 600;
-static constexpr size_t default_frames = 48;
+static constexpr int default_width = 1280;
+static constexpr int default_height = 720;
+static constexpr size_t default_frames = 128;
 static constexpr size_t default_frame_time = 5000 / default_frames;
 static constexpr GLuint compute_local_dim = 4;
-static constexpr size_t default_iterations = 96;
+static constexpr size_t default_iterations = 128;
 static constexpr size_t chunk_frame_count = 16;
 
 GLuint load_skybox(GLenum unit, const char *path_fmt)
