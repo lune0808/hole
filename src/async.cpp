@@ -1,16 +1,12 @@
 #include <fcntl.h>
+#include <cstdio>
+#include <cassert>
 #include <unistd.h>
 #include <cstring>
 #include "async.hpp"
 
 file::file(const char *path, mode m, size_t count)
-	: ctrl{}, buf{std::make_unique<std::uint32_t[]>(count)}
 {
-#ifndef NDEBUG
-	std::memset(buf.get(), 0x66, count * sizeof(buf[0]));
-#endif
-
-	int fd;
 	switch (m) {
 	case mode::read:
 		fd = open(path, O_RDONLY);
@@ -25,54 +21,65 @@ file::file(const char *path, mode m, size_t count)
 		fd = -1;
 		break;
 	}
-	ctrl.aio_fildes = fd;
-	if (fd == -1) return;
 }
 
 file::~file()
 {
-	int fd = ctrl.aio_fildes;
 	fsync(fd);
 	close(fd);
 }
 
-off_t file::read(size_t size, off_t at)
+static file::request build_req(int fd, void *buf, size_t size, off_t at)
 {
-	ctrl.aio_offset = at;
-	ctrl.aio_buf = buf.get();
-	ctrl.aio_nbytes = size;
-	ctrl.aio_reqprio = 0;
-	ctrl.aio_sigevent.sigev_notify = SIGEV_NONE;
-	aio_read(&ctrl);
-	return at + size;
+	file::request req;
+	req.aio_fildes = fd;
+	req.aio_buf = buf;
+	req.aio_nbytes = size;
+	req.aio_offset = at;
+	req.aio_reqprio = 0;
+	req.aio_sigevent.sigev_notify = SIGEV_NONE;
+	return req;
 }
 
-off_t file::write(size_t size, off_t at)
+file::request file::read(void *buf, size_t size, off_t at)
 {
-	ctrl.aio_offset = at;
-	ctrl.aio_buf = buf.get();
-	ctrl.aio_nbytes = size;
-	ctrl.aio_reqprio = 0;
-	ctrl.aio_sigevent.sigev_notify = SIGEV_NONE;
-	aio_write(&ctrl);
-	return at + size;
+	request req = build_req(fd, buf, size, at);
+	aio_read(&req);
+	return req;
 }
 
-bool file::execute(std::chrono::milliseconds timeout_)
+file::request file::write(void *buf, size_t size, off_t at)
+{
+	request req = build_req(fd, const_cast<void*>(buf), size, at);
+	aio_write(&req);
+	return req;
+}
+
+bool file::execute(request req, std::chrono::milliseconds timeout_)
 {
 	int status;
 
-	status = aio_error(&ctrl);
+	status = aio_error(&req);
+	assert(req.aio_fildes == fd);
 	if (status == 0) {
+		status = aio_return(&req);
+		assert(status == req.aio_nbytes);
 		return true;
 	} else if (status == EINPROGRESS) {
-		auto cb_ptr = &ctrl;
+		aiocb *cb_ptr = &req;
 		timespec timeout{
 			.tv_sec=0,
 			.tv_nsec=timeout_.count() * 1'000'000l
 		};
 		status = aio_suspend(&cb_ptr, 1, timeout_ != wait? &timeout: nullptr);
 		if (status == 0) {
+			status = aio_return(&req);
+			if (status != req.aio_nbytes) {
+				// assumes writes never reach this point...
+				std::printf("blocking read!!!\n");
+				::lseek(req.aio_fildes, req.aio_offset, SEEK_SET);
+				::read(req.aio_fildes, (void*) req.aio_buf, req.aio_nbytes);
+			}
 			return true;
 		} else {
 			return false;
@@ -82,9 +89,9 @@ bool file::execute(std::chrono::milliseconds timeout_)
 	}
 }
 
-bool file::cancel()
+bool file::cancel(request req)
 {
-	int status = aio_cancel(ctrl.aio_fildes, &ctrl);
+	int status = aio_cancel(req.aio_fildes, &req);
 	return (status == AIO_CANCELED) || (status == AIO_ALLDONE);
 }
 

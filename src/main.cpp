@@ -86,33 +86,45 @@ void print_chunk(const std::uint32_t *buf, size_t count)
 	std::printf("\n");
 }
 
-void complete_texture_dump(file *f)
+void color_chunk(void *buf, size_t size, std::uint32_t color)
 {
-	auto success = f->execute(file::wait);
+	for (size_t i = 0; i < size/host_pixel_size; ++i) {
+		((std::uint32_t*) buf)[i] = color;
+	}
+}
+
+void complete_dump(file *f, file::request req)
+{
+	auto success = f->execute(req, file::wait);
 	if (!success) {
 		std::printf("[io error] write\n");
 		// program should exit...
 	}
+	// std::printf("commit write @%zx ", req.aio_offset);
+	// print_chunk((std::uint32_t*) req.aio_buf, 16);
 }
 
-off_t issue_texture_dump(file *f, size_t size, GLuint chunk_name, off_t addr, void *buf)
+file::request issue_dump(file *f, size_t size, GLuint chunk_name, off_t addr, void *buf)
 {
 	// this blocks until packing is done, also the floating point format is converted
 	// ideally we would keep floats and stream the texture using DSA
+	color_chunk(buf, size, 0xffff00ffu);
 	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
-	return f->write(size, addr);
+	return f->write(buf, size, addr);
 }
 
-void complete_texture_load(file *f)
+void complete_load(file *f, file::request req)
 {
-	auto success = f->execute(file::wait);
+	auto success = f->execute(req, file::wait);
 	if (!success) {
 		std::printf("[io error] read\n");
 		return;
 	}
+	// std::printf("commit read @%zx ", req.aio_offset);
+	// print_chunk((std::uint32_t*) req.aio_buf, 16);
 }
 
-void issue_texture_load(file *f, chunk_info_t const &info, GLuint chunk_name, size_t addr, void *buf)
+file::request issue_load(file *f, chunk_info_t const &info, GLuint chunk_name, size_t addr, void *buf)
 {
 	if (chunk_name) {
 		glTextureSubImage3D(chunk_name, 0 /* mipmap */,
@@ -121,7 +133,8 @@ void issue_texture_load(file *f, chunk_info_t const &info, GLuint chunk_name, si
 			GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, buf);
 	}
 	const size_t size = npixels(info) * host_pixel_size;
-	f->read(size, addr);
+	color_chunk(buf, size, 0x00ffffffu);
+	return f->read(buf, size, addr);
 }
 
 struct draw_settings {
@@ -245,12 +258,11 @@ int main(int argc, char **argv)
 	chunk_info_t sim_repr;
 	if (mode == INPUT) {
 		file input{sim_path, file::mode::read, sizeof sim_repr};
-		input.read(sizeof sim_repr, 0);
-		bool success = input.execute(file::wait);
+		auto rreq = input.read(&sim_repr, sizeof sim_repr, 0);
+		bool success = input.execute(rreq, file::wait);
 		if (!success) {
 			return 1;
 		}
-		std::memcpy(&sim_repr, input.buf.get(), sizeof sim_repr);
 	} else {
 		sim_repr.width = default_width;
 		sim_repr.height = default_height;
@@ -274,8 +286,8 @@ int main(int argc, char **argv)
 
 	if (mode == OUTPUT) {
 		file output{sim_path, file::mode::write, chunk_frame_count * width * height};
-		std::memcpy(output.buf.get(), &sim_repr, sizeof sim_repr);
-		off_t write_addr = output.write(sizeof sim_repr, 0);
+		auto wreq = output.write(&sim_repr, sizeof sim_repr, 0);
+		off_t write_addr = sizeof sim_repr;
 
 		auto compute_src = load_file("src/compute.glsl");
 		const auto compute_shdr = build_shader(compute_src);
@@ -310,6 +322,9 @@ int main(int argc, char **argv)
 		glUseProgram(compute_shdr);
 		glUniform1i(2 /* skybox */, 2 /* GL_TEXTURE2 */);
 
+		const size_t chunk_pixels = width * height * chunk_frame_count;
+		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
+
 		// n_frames should always be a multiple of chunk_frame_count
 		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
 			const GLuint buffer = (i_frame / chunk_frame_count) % 2;
@@ -339,8 +354,9 @@ int main(int argc, char **argv)
 				// technically this only needs to wait for the request
 				// that was made for the previous issue with the same
 				// `buffer` index
-				complete_texture_dump(&output);
-				write_addr = issue_texture_dump(&output, chunk_size, sim[buffer], write_addr, output.buf.get());
+				complete_dump(&output, wreq);
+				wreq = issue_dump(&output, chunk_size, sim[buffer], write_addr, buf.get());
+				write_addr += chunk_size;
 			}
 
 			std::printf("\rframe #%zu", i_frame);
@@ -348,7 +364,7 @@ int main(int argc, char **argv)
 		}
 		std::printf("\r                 \r");
 		// push the last issue
-		complete_texture_dump(&output);
+		complete_dump(&output, wreq);
 	}
 
 	assert(sim_repr.frame_count > chunk_frame_count);
@@ -356,12 +372,13 @@ int main(int argc, char **argv)
 		sim_repr.width, sim_repr.height, chunk_frame_count, file::wait.count()
 	};
 	const size_t chunk_pixels = npixels(chunk);
+	auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
 	file input{sim_path, file::mode::read, chunk_pixels};
-	input.read(sizeof sim_repr, 0); // this should be memcpy'ing the result to sim_repr for mode==INPUT mainly
-	complete_texture_load(&input);
-	issue_texture_load(&input, chunk,      0, sizeof sim_repr, input.buf.get());
-	complete_texture_load(&input);
-	issue_texture_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t), input.buf.get());
+	auto rreq = input.read(&sim_repr, sizeof sim_repr, 0);
+	complete_load(&input, rreq);
+	rreq = issue_load(&input, chunk,      0, sizeof sim_repr, buf.get());
+	complete_load(&input, rreq);
+	rreq = issue_load(&input, chunk, sim[0], sizeof sim_repr + chunk_pixels * sizeof(std::uint32_t), buf.get());
 
 	GLuint prev_chunk_index = 0;
 	for (GLuint frame = 0; win; ++frame) {
@@ -378,13 +395,13 @@ int main(int argc, char **argv)
 			const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
 			const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
 			assert(next_chunk_index == chunk_index+1 || next_chunk_index == chunk_index-1);
-			complete_texture_load(&input);
-			issue_texture_load(
+			complete_load(&input, rreq);
+			rreq = issue_load(
 				&input,
 				chunk,
 				sim[buffer],
 				sizeof sim_repr + next_chunk_index * chunk_pixels * sizeof(std::uint32_t),
-				input.buf.get()
+				buf.get()
 			);
 		}
 		prev_chunk_index = chunk_index;

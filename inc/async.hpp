@@ -7,18 +7,19 @@
 
 struct file
 {
-	aiocb ctrl;
-	std::unique_ptr<std::uint32_t[]> buf;
+	struct request : public aiocb {};
+
+	int fd;
 
 	enum class mode { read, write, append };
 	file(const char *path, mode mode, size_t buf_elem_count);
 	~file();
 
-	off_t read(size_t size, off_t at);
-	off_t write(size_t size, off_t at);
+	request read(void *buf, size_t size, off_t at);
+	request write(void *buf, size_t size, off_t at);
 
 	static constexpr std::chrono::milliseconds wait{0};
-	bool execute(std::chrono::milliseconds timeout);
-	bool cancel();
+	bool execute(request req, std::chrono::milliseconds timeout);
+	bool cancel(request req);
 };
 
