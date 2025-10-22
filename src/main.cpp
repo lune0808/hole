@@ -243,14 +243,13 @@ bool fence_block(GLsync fence)
 	return fence_try_wait(fence, time_interval::max());
 }
 
-bool pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
+void pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
 {
 	// TODO: change format to floats
 	glTextureSubImage3D(name, 0, 0, 0, 0, info.width, info.height, info.frame_count,
 		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, (void*) device_addr);
 	glDeleteSync(transfer_fence);
 	transfer_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-	return true;
 }
 
 // we can't unpack to texture[i+2] while
@@ -270,10 +269,10 @@ int try_stream_load(io_request req, chunk_info_t const &info,
 {
 	// coroutine lol
 	switch (suspend) {
+	case 8:
+		/* fallthrough */
 	case 4:
-		if (!pixel_unpack(chunk_name, info, device_addr)) {
-			return 4;
-		}
+		pixel_unpack(chunk_name, info, device_addr);
 		/* fallthrough */
 	case 3:
 		if (!fence_try_wait(transfer_fence, deadline)) {
@@ -551,11 +550,11 @@ int main(int argc, char **argv)
 		GLuint pixel_transfer;
 		glGenBuffers(1, &pixel_transfer);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pixel_transfer);
-		// TODO: replace GL_MAP_COHERENT_BIT by GL_MAP_UNSYNCHRONIZED_BIT
-		// because of the double buffering
+		// TODO: fix screen tearing
 		GLbitfield pixel_transfer_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT;
 		glBufferStorage(GL_PIXEL_UNPACK_BUFFER, 2 * chunk_size, nullptr, pixel_transfer_flags);
-		streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, 2 * chunk_size, pixel_transfer_flags | GL_MAP_UNSYNCHRONIZED_BIT);
+		streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0,
+			2 * chunk_size, pixel_transfer_flags | GL_MAP_UNSYNCHRONIZED_BIT);
 
 		assert(sim_repr.frame_count >= 3*chunk_frame_count);
 		blocking_load(streaming_memory, 2*chunk_size, sizeof sim_repr);
@@ -578,12 +577,10 @@ int main(int argc, char **argv)
 			const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
 			const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
 			if (chunk_index != prev_chunk_index) {
-				if (upload_state != 0) {
-					force_stream_load(rreq, chunk, device_addr, sim[buffer], upload_state);
-				}
+				force_stream_load(rreq, chunk, device_addr, sim[buffer], upload_state);
 				const GLuint next_next_chunk_index =
 					back_and_forth(frame + 3*chunk_frame_count-1, sim_repr.frame_count-1) / chunk_frame_count;
-				upload_state = 4;
+				upload_state = 8;
 				device_addr = next_buffer * chunk_size;
 				rreq.buf = streaming_memory + buffer * chunk_size;
 				rreq.addr = sizeof sim_repr + next_next_chunk_index * chunk_size;
