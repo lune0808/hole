@@ -108,7 +108,7 @@ static char *streaming_memory;
 static GLsync transfer_fence;
 static GLsync draw_fence;
 
-static constexpr auto poll_period = 100ms;
+static constexpr auto poll_period = 1ms;
 
 void io_worker(std::atomic<io_work_type> *type)
 {
@@ -305,15 +305,15 @@ struct draw_settings {
 	GLuint quad_va;
 	GLuint frame_location;
 	float frame_value;
-	GLuint screen_location;
-	GLuint screen_value;
+	GLuint select_location;
+	float select_value;
 };
 
 void draw_quad(draw_settings set)
 {
 	glUseProgram(set.shader);
 	glUniform1f(set.frame_location, set.frame_value);
-	glUniform1i(set.screen_location, set.screen_value);
+	glUniform1f(set.select_location, set.select_value);
 	glBindVertexArray(set.quad_va);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 }
@@ -488,6 +488,8 @@ int main(int argc, char **argv)
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
 
 		glProgramUniform1i(compute_shdr, 2 /* skybox */, 2 /* GL_TEXTURE2 */);
+		glProgramUniform1i(graphics_shdr, 0 /* screen0 */, 0);
+		glProgramUniform1i(graphics_shdr, 1 /* screen1 */, 1);
 
 		const GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
 		const GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
@@ -512,8 +514,8 @@ int main(int argc, char **argv)
 
 			draw_settings set{
 				graphics_shdr, quad_va,
-				1, float(frame_index),
-				0, buffer,
+				2, float(frame_index),
+				3, float(buffer),
 			};
 			draw_quad(set);
 			win.draw();
@@ -551,9 +553,9 @@ int main(int argc, char **argv)
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pixel_transfer);
 		// TODO: replace GL_MAP_COHERENT_BIT by GL_MAP_UNSYNCHRONIZED_BIT
 		// because of the double buffering
-		GLbitfield pixel_transfer_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+		GLbitfield pixel_transfer_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT;
 		glBufferStorage(GL_PIXEL_UNPACK_BUFFER, 2 * chunk_size, nullptr, pixel_transfer_flags);
-		streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, 2 * chunk_size, pixel_transfer_flags);
+		streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, 2 * chunk_size, pixel_transfer_flags | GL_MAP_UNSYNCHRONIZED_BIT);
 
 		assert(sim_repr.frame_count >= 3*chunk_frame_count);
 		blocking_load(streaming_memory, 2*chunk_size, sizeof sim_repr);
@@ -595,8 +597,8 @@ int main(int argc, char **argv)
 
 			draw_settings set{
 				graphics_shdr, quad_va,
-					1, float(buffer_index),
-					0, buffer,
+				2, float(buffer_index),
+				3, float(buffer),
 			};
 			draw_quad(set);
 			win.draw();
