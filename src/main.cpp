@@ -143,7 +143,6 @@ void io_worker(std::atomic<io_work_type> *type)
 				std::printf("[io error] read\n");
 				std::memset(buf, 'R' /* 0x52 */, req.size);
 			}
-			std::printf(">@%8zx\n", req.addr);
 			break;
 		case io_work_type::exit:
 			return;
@@ -216,7 +215,6 @@ io_request issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
 
 io_request issue_load(void *buf, size_t size, off_t addr)
 {
-	std::printf("<@%8zx -> %p\n", addr, buf);
 	return issue_io_request(io_work_type::read, buf, size, addr);
 }
 
@@ -231,9 +229,6 @@ bool fence_try_wait(GLsync fence, time_interval timeout)
 {
 	const auto status = glClientWaitSync(fence, 0, timeout.count());
 	bool ok = (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED);
-	if (ok) {
-		std::printf(">fence\n");
-	}
 	return ok;
 }
 
@@ -250,8 +245,6 @@ bool fence_block(GLsync fence)
 
 bool pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
 {
-	std::printf("<             %p = pinned[%7tx] -> T%u\n",
-		streaming_memory + device_addr, device_addr, name);
 	// TODO: change format to floats
 	glTextureSubImage3D(name, 0, 0, 0, 0, info.width, info.height, info.frame_count,
 		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, (void*) device_addr);
@@ -348,12 +341,12 @@ static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
 static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
 static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
 
-static constexpr int default_width = 800;
-static constexpr int default_height = 600;
+static constexpr int default_width = 1280;
+static constexpr int default_height = 720;
 static constexpr size_t default_frames = 128;
 static constexpr size_t default_frame_time = 5000 / default_frames;
 static constexpr GLuint compute_local_dim = 4;
-static constexpr size_t default_iterations = 48;
+static constexpr size_t default_iterations = 96;
 static constexpr size_t chunk_frame_count = 16;
 
 GLuint load_skybox(GLenum unit, const char *path_fmt)
@@ -562,16 +555,13 @@ int main(int argc, char **argv)
 		glBufferStorage(GL_PIXEL_UNPACK_BUFFER, 2 * chunk_size, nullptr, pixel_transfer_flags);
 		streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, 2 * chunk_size, pixel_transfer_flags);
 
-		assert(sim_repr.frame_count >= 5*chunk_frame_count);
-		std::printf("A\n");
+		assert(sim_repr.frame_count >= 3*chunk_frame_count);
 		blocking_load(streaming_memory, 2*chunk_size, sizeof sim_repr);
-		std::printf("B\n");
 		pixel_unpack(sim[0], chunk, 0);
 		pixel_unpack(sim[1], chunk, chunk_size);
 		fence_block(transfer_fence);
 		// rreq is made as if it produced the current state
 		auto rreq = blocking_load(streaming_memory, chunk_size, sizeof sim_repr + 2*chunk_size);
-		std::printf("buffers primed\n");
 
 		int upload_state = 0;
 		GLuint prev_chunk_index = 0;
@@ -589,7 +579,6 @@ int main(int argc, char **argv)
 				if (upload_state != 0) {
 					force_stream_load(rreq, chunk, device_addr, sim[buffer], upload_state);
 				}
-				std::printf("chunk swap (%sforced)\n", (upload_state != 0) ? "": "not ");
 				const GLuint next_next_chunk_index =
 					back_and_forth(frame + 3*chunk_frame_count-1, sim_repr.frame_count-1) / chunk_frame_count;
 				upload_state = 4;
@@ -601,13 +590,9 @@ int main(int argc, char **argv)
 				const auto deadline = frame_start_time + frame_time/2;
 				const auto new_state = try_stream_load(rreq, chunk, device_addr,
 					sim[next_buffer], upload_state, deadline);
-				if (new_state != upload_state) {
-					std::printf("frame %u progressed %d->%d\n", buffer_index, upload_state, new_state);
-				}
 				upload_state = new_state;
 			}
 
-			std::printf("draw T%u\n", sim[buffer]);
 			draw_settings set{
 				graphics_shdr, quad_va,
 					1, float(buffer_index),
