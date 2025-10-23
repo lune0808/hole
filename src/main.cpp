@@ -294,13 +294,21 @@ GLuint graphics_shader(const char *vpath, const char *fpath)
 	return shdr;
 }
 
-void sensible_texture_defaults(GLenum kind)
+enum texture_settings {
+	use_mipmaps = 1 << 0,
+};
+
+void sensible_texture_defaults(GLenum kind, texture_settings ts = texture_settings(0))
 {
-	glTexParameteri(kind, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(kind, GL_TEXTURE_MIN_FILTER,
+		(ts & texture_settings::use_mipmaps)? GL_LINEAR_MIPMAP_LINEAR: GL_LINEAR);
 	glTexParameteri(kind, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(kind, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(kind, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(kind, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	if (ts & texture_settings::use_mipmaps) {
+		glGenerateMipmap(kind);
+	}
 }
 
 GLuint load_skybox(GLenum unit, const char *path_fmt)
@@ -327,7 +335,7 @@ GLuint load_skybox(GLenum unit, const char *path_fmt)
 		);
 		stbi_image_free(data);
 	}
-	sensible_texture_defaults(GL_TEXTURE_CUBE_MAP);
+	sensible_texture_defaults(GL_TEXTURE_CUBE_MAP, texture_settings::use_mipmaps);
 	return tex;
 }
 
