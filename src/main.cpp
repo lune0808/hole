@@ -209,7 +209,7 @@ io_request issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
 {
 	// this blocks until packing is done, also the floating point format is converted
 	// ideally we would keep floats and stream the texture using DSA
-	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, size, buf);
+	glGetTextureImage(chunk_name, 0, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, size, buf);
 	return issue_io_request(io_work_type::write, buf, size, addr);
 }
 
@@ -247,7 +247,7 @@ void pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
 {
 	// TODO: change format to floats
 	glTextureSubImage3D(name, 0, 0, 0, 0, info.width, info.height, info.frame_count,
-		GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, (void*) device_addr);
+		GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, (void*) device_addr);
 	glDeleteSync(transfer_fence);
 	transfer_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 }
@@ -439,9 +439,9 @@ int main(int argc, char **argv)
 	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
 
 	GLuint sim[2];
-	sim[0] = texture_array(GL_TEXTURE0, GL_RGBA32F, width, height, chunk_frame_count);
+	sim[0] = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
 	if (n_frames > chunk_frame_count) {
-		sim[1] = texture_array(GL_TEXTURE1, GL_RGBA32F, width, height, chunk_frame_count);
+		sim[1] = texture_array(GL_TEXTURE1, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
 	}
 
 	const auto quad_va = describe_va();
@@ -506,7 +506,7 @@ int main(int argc, char **argv)
 			data.sch_radius = glm::mix(start_sch_r, end_sch_r, progress);
 
 			glUseProgram(compute_shdr);
-			enable_sim_frame(0, sim[buffer], frame_index, GL_RGBA32F);
+			enable_sim_frame(0, sim[buffer], frame_index, GL_R11F_G11F_B10F);
 			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 			glDispatchCompute(compute_width, compute_height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);

@@ -1,7 +1,7 @@
 #version 430 core
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
-uniform layout(binding=0,rgba32f) writeonly restrict image2D screen;
+uniform layout(binding=0,r11f_g11f_b10f) writeonly restrict image2D screen;
 layout(std430,binding=1) readonly restrict buffer scene
 {
 	vec4 q_orientation;
