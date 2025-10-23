@@ -82,7 +82,7 @@ struct io_request
 	off_t addr;
 };
 
-enum class io_work_type { none = 0, open_read, open_write, read, write, exit };
+enum class io_work_type { none = 0, open_read, open_write, open_recover, close, read, write, exit };
 static std::atomic<io_work_type> current_io_work_type;
 static io_request current_io_request;
 
@@ -96,8 +96,7 @@ using time_interval = std::chrono::nanoseconds;
 
 void io_worker(std::atomic<io_work_type> *type)
 {
-	std::ofstream os;
-	std::ifstream is;
+	std::fstream s;
 	for (;;) {
 		auto t = type->load(std::memory_order_acquire);
 		auto req = current_io_request;
@@ -107,28 +106,33 @@ void io_worker(std::atomic<io_work_type> *type)
 			std::this_thread::sleep_for(poll_period);
 			continue;
 		case io_work_type::open_write:
-			os = std::ofstream(buf);
-			assert(os.is_open());
+			s = std::fstream(buf, std::ios::out | std::ios::binary);
 			break;
 		case io_work_type::open_read:
-			is = std::ifstream(buf);
-			assert(is.is_open());
+			s = std::fstream(buf, std::ios::in  | std::ios::binary);
+			break;
+		case io_work_type::open_recover:
+			s = std::fstream(buf, std::ios::in  | std::ios::out | std::ios::binary);
+			break;
+		case io_work_type::close:
+			s.close();
 			break;
 		case io_work_type::write:
-			assert(os.is_open());
-			if (!(os.seekp(req.addr) && os.write(buf, req.size))) {
+			assert(s.is_open());
+			if (!(s.seekp(req.addr) && s.write(buf, req.size))) {
 				std::printf("[io error] write\n");
 				std::memset(buf, 'W' /* 0x57 */, req.size);
 			}
 			break;
 		case io_work_type::read:
-			assert(is.is_open());
-			if (!(is.seekg(req.addr) && is.read(buf, req.size))) {
+			assert(s.is_open());
+			if (!(s.seekg(req.addr) && s.read(buf, req.size))) {
 				std::printf("[io error] read\n");
 				std::memset(buf, 'R' /* 0x52 */, req.size);
 			}
 			break;
 		case io_work_type::exit:
+			std::printf("closing streams...\r");
 			return;
 		}
 		type->store(io_work_type::none, std::memory_order_release);
@@ -368,20 +372,35 @@ GLuint back_and_forth(GLuint index_, GLuint max_value_)
 
 int main(int argc, char **argv)
 {
-	enum { OUTPUT, INPUT } mode = OUTPUT;
+	enum { OUTPUT, INPUT, RECOVER } mode = OUTPUT;
 	const char *sim_path = "/tmp/black_hole_sim_data.bin";
 	if (argc == 3 && std::strcmp(argv[1], "-o") == 0) {
 		sim_path = argv[2];
+	} else if (argc == 3 && std::strcmp(argv[1], "-r") == 0) {
+		sim_path = argv[2];
+		mode = RECOVER;
 	} else if (argc == 2) {
 		sim_path = argv[1];
 		mode = INPUT;
 	}
 
+	off_t recover_chunk = 0;
 	chunk_info_t sim_repr;
-	if (mode == INPUT) {
+	if (mode == INPUT || mode == RECOVER) {
 		std::ifstream input{sim_path};
 		if (!input.read(reinterpret_cast<char*>(&sim_repr), sizeof sim_repr)) {
 			return 1;
+		}
+		if (mode == RECOVER) {
+			input.seekg(0, std::ios_base::end);
+			const size_t size = input.tellg();
+			const auto chunk_size = sim_repr.width * sim_repr.height * chunk_frame_count * host_pixel_size;
+			// off_t is signed
+			recover_chunk = (size - sizeof sim_repr) / chunk_size - 1;
+			if (recover_chunk <= 0) {
+				recover_chunk = 0;
+				mode = OUTPUT;
+			}
 		}
 	} else {
 		sim_repr.width = default_width;
@@ -409,11 +428,13 @@ int main(int argc, char **argv)
 	assert(n_frames % chunk_frame_count == 0);
 	assert(n_frames > chunk_frame_count);
 
-	if (mode == OUTPUT) {
-		issue_open(io_work_type::open_write, sim_path);
+	if (mode == OUTPUT || mode == RECOVER) {
+		issue_open((mode == OUTPUT)? io_work_type::open_write: io_work_type::open_recover, sim_path);
 		complete_io_request();
 		issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
-		off_t write_addr = sizeof sim_repr;
+		const size_t chunk_pixels = width * height * chunk_frame_count;
+		const size_t chunk_size = chunk_pixels * host_pixel_size;
+		off_t write_addr = sizeof sim_repr + recover_chunk * chunk_size;
 
 		auto compute_src = load_file("src/compute.glsl");
 		const auto compute_shdr = build_shader(compute_src);
@@ -451,11 +472,9 @@ int main(int argc, char **argv)
 
 		const GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
 		const GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
-		const size_t chunk_pixels = width * height * chunk_frame_count;
-		const size_t chunk_size = chunk_pixels * host_pixel_size;
 		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
 		// n_frames should always be a multiple of chunk_frame_count
-		for (size_t i_frame = 0; win && i_frame < n_frames; ++i_frame) {
+		for (size_t i_frame = recover_chunk * chunk_frame_count; win && i_frame < n_frames; ++i_frame) {
 			const GLuint buffer = (i_frame / chunk_frame_count) % 2;
 			const GLuint frame_index = i_frame % chunk_frame_count;
 			float progress = smoothstep(float(i_frame) / float(n_frames-1));
@@ -488,6 +507,8 @@ int main(int argc, char **argv)
 		std::printf("\r                 \r");
 		// push the last issue
 		complete_dump();
+		issue_io_request(io_work_type::close);
+		complete_io_request();
 	}
 
 	if (win) {
@@ -547,9 +568,10 @@ int main(int argc, char **argv)
 			win.present();
 			std::this_thread::sleep_until(start_time + present_frame * frame_time);
 		}
+		issue_io_request(io_work_type::close);
+		complete_io_request();
 	}
 
-	complete_io_request();
 	issue_io_request(io_work_type::exit);
 }
 
