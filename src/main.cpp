@@ -17,15 +17,6 @@ using namespace std::chrono_literals;
 
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
-struct camera_t
-{
-	float fov;
-	float width;
-	float height;
-	glm::vec3 position;
-	glm::vec3 direction;
-};
-
 static const float quad[] = {
 	-1.0f, -1.0f,
 	+1.0f, -1.0f,
@@ -64,36 +55,6 @@ struct chunk_info_t {
 	std::uint32_t ms_per_frame;
 };
 
-using chunk_t = std::unique_ptr<std::uint32_t[]>;
-
-size_t npixels(chunk_info_t const &h)
-{
-	return h.width * h.height * h.frame_count;
-}
-
-void print_chunk(const std::uint32_t *buf, size_t count)
-{
-	std::printf("chunk:");
-	static constexpr std::uint32_t ff = 0xff;
-	for (size_t w = 0; w < count; ++w) {
-		std::printf("%c%02x %02x %02x %02x",
-			(w % 4 == 0) ? '\n': ' ',
-			(buf[w] >>  0) & ff,
-			(buf[w] >>  8) & ff,
-			(buf[w] >> 16) & ff,
-			(buf[w] >> 24) & ff
-		);
-	}
-	std::printf("\n");
-}
-
-void color_chunk(void *buf, size_t size, std::uint32_t color)
-{
-	for (size_t i = 0; i < size/host_pixel_size; ++i) {
-		((std::uint32_t*) buf)[i] = color;
-	}
-}
-
 struct io_request
 {
 	void *buf;
@@ -104,9 +65,8 @@ struct io_request
 enum class io_work_type { none = 0, open_read, open_write, read, write, exit };
 static std::atomic<io_work_type> current_io_work_type;
 static io_request current_io_request;
-static char *streaming_memory;
+
 static GLsync transfer_fence;
-static GLsync draw_fence;
 
 static constexpr auto poll_period = 1ms;
 
@@ -155,9 +115,9 @@ io_request issue_io_request(io_work_type type,
 	void *buf = nullptr, size_t size = 0, off_t addr = 0)
 {
 	io_request req = io_request{buf, size, addr};
+	const auto cur = current_io_work_type.load(std::memory_order_relaxed);
+	assert(cur == io_work_type::none);
 	current_io_request = req;
-	const auto cur = current_io_work_type.load();
-	assert(type == io_work_type::exit || cur == io_work_type::none);
 	current_io_work_type.store(type, std::memory_order_release);
 	return req;
 }
@@ -245,7 +205,6 @@ bool fence_block(GLsync fence)
 
 void pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
 {
-	// TODO: change format to floats
 	glTextureSubImage3D(name, 0, 0, 0, 0, info.width, info.height, info.frame_count,
 		GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, (void*) device_addr);
 	glDeleteSync(transfer_fence);
@@ -348,6 +307,15 @@ static constexpr GLuint compute_local_dim = 4;
 static constexpr size_t default_iterations = 96;
 static constexpr size_t chunk_frame_count = 16;
 
+void sensible_texture_defaults(GLenum kind)
+{
+	glTexParameteri(kind, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(kind, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(kind, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(kind, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(kind, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+}
+
 GLuint load_skybox(GLenum unit, const char *path_fmt)
 {
 	GLuint tex;
@@ -372,11 +340,7 @@ GLuint load_skybox(GLenum unit, const char *path_fmt)
 		);
 		stbi_image_free(data);
 	}
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	sensible_texture_defaults(GL_TEXTURE_CUBE_MAP);
 	return tex;
 }
 
@@ -387,11 +351,7 @@ GLuint texture_array(GLenum unit, GLenum format, size_t width, size_t height, si
 	glActiveTexture(unit);
 	glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1 /* mipmap */, format, width, height, depth);
-	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	sensible_texture_defaults(GL_TEXTURE_2D_ARRAY);
 	return tex;
 }
 
@@ -543,7 +503,7 @@ int main(int argc, char **argv)
 		chunk_info_t chunk{
 			sim_repr.width, sim_repr.height, chunk_frame_count, sim_repr.ms_per_frame
 		};
-		const size_t chunk_pixels = npixels(chunk);
+		const size_t chunk_pixels = sim_repr.width * sim_repr.height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
 		const size_t chunk_count = sim_repr.frame_count / chunk_frame_count;
 
@@ -553,16 +513,16 @@ int main(int argc, char **argv)
 		// TODO: fix screen tearing
 		GLbitfield pixel_transfer_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT;
 		glBufferStorage(GL_PIXEL_UNPACK_BUFFER, 2 * chunk_size, nullptr, pixel_transfer_flags);
-		streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0,
+		char *streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0,
 			2 * chunk_size, pixel_transfer_flags | GL_MAP_UNSYNCHRONIZED_BIT);
 
-		assert(sim_repr.frame_count >= 3*chunk_frame_count);
+		assert(sim_repr.frame_count >= 2*chunk_frame_count);
 		blocking_load(streaming_memory, 2*chunk_size, sizeof sim_repr);
 		pixel_unpack(sim[0], chunk, 0);
 		pixel_unpack(sim[1], chunk, chunk_size);
 		fence_block(transfer_fence);
 		// rreq is made as if it produced the current state
-		auto rreq = blocking_load(streaming_memory, chunk_size, sizeof sim_repr + 2*chunk_size);
+		auto rreq = blocking_load(streaming_memory, chunk_size, sizeof sim_repr + (2%chunk_count)*chunk_size);
 
 		int upload_state = 0;
 		GLuint prev_chunk_index = 0;
@@ -574,8 +534,6 @@ int main(int argc, char **argv)
 			const GLuint buffer = chunk_index % 2;
 			const GLuint next_buffer = buffer ^ 1;
 			const GLuint buffer_index = frame_index % chunk_frame_count;
-			const GLuint next_chunk_frame_index = back_and_forth(frame + 2*chunk_frame_count-1, sim_repr.frame_count-1);
-			const GLuint next_chunk_index = next_chunk_frame_index / chunk_frame_count;
 			if (chunk_index != prev_chunk_index) {
 				force_stream_load(rreq, chunk, device_addr, sim[buffer], upload_state);
 				const GLuint next_next_chunk_index =
