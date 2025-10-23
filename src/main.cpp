@@ -15,6 +15,26 @@
 
 using namespace std::chrono_literals;
 
+static constexpr glm::vec3 X{1.0f, 0.0f, 0.0f};
+static constexpr glm::vec3 Y{0.0f, 1.0f, 0.0f};
+static constexpr glm::vec3 Z{0.0f, 0.0f, 1.0f};
+
+static constexpr float start_sch_r = 2.0f;
+static constexpr float   end_sch_r = 2.0f;
+
+static constexpr float start_angle = 0.0f;
+static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
+
+static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
+static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
+
+static constexpr int default_width = 1280;
+static constexpr int default_height = 720;
+static constexpr size_t default_frames = 256;
+static constexpr size_t default_frame_time = 5000 / default_frames;
+static constexpr GLuint compute_local_dim = 4;
+static constexpr size_t default_iterations = 368;
+static constexpr size_t chunk_frame_count = 4;
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
 static const float quad[] = {
@@ -115,7 +135,9 @@ io_request issue_io_request(io_work_type type,
 	void *buf = nullptr, size_t size = 0, off_t addr = 0)
 {
 	io_request req = io_request{buf, size, addr};
+#ifndef NDEBUG
 	const auto cur = current_io_work_type.load(std::memory_order_relaxed);
+#endif
 	assert(cur == io_work_type::none);
 	current_io_request = req;
 	current_io_work_type.store(type, std::memory_order_release);
@@ -203,9 +225,9 @@ bool fence_block(GLsync fence)
 	return fence_try_wait(fence, time_interval::max());
 }
 
-void pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
+void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr)
 {
-	glTextureSubImage3D(name, 0, 0, 0, 0, info.width, info.height, info.frame_count,
+	glTextureSubImage3D(name, 0, 0, 0, 0, width, height, chunk_frame_count,
 		GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, (void*) device_addr);
 	glDeleteSync(transfer_fence);
 	transfer_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -223,7 +245,7 @@ void pixel_unpack(GLuint name, chunk_info_t const &info, GLintptr device_addr)
 // when the time comes to draw i+1,
 // this `pipeline` gets reset so it
 // must be flushed prior.
-int try_stream_load(io_request req, chunk_info_t const &info,
+int try_stream_load(io_request req, GLuint width, GLuint height,
 	GLintptr device_addr, GLuint chunk_name, int suspend, instant_t deadline)
 {
 	// coroutine lol
@@ -231,7 +253,7 @@ int try_stream_load(io_request req, chunk_info_t const &info,
 	case 8:
 		/* fallthrough */
 	case 4:
-		pixel_unpack(chunk_name, info, device_addr);
+		pixel_unpack(chunk_name, width, height, device_addr);
 		/* fallthrough */
 	case 3:
 		if (!fence_try_wait(transfer_fence, deadline)) {
@@ -253,9 +275,11 @@ int try_stream_load(io_request req, chunk_info_t const &info,
 	}
 }
 
-bool force_stream_load(io_request next_req, chunk_info_t const &info, GLintptr device_addr, GLuint chunk_name, int suspend)
+bool force_stream_load(io_request next_req, GLuint width, GLuint height,
+	GLintptr device_addr, GLuint chunk_name, int suspend)
 {
-	return try_stream_load(next_req, info, device_addr, chunk_name, suspend, instant_t::max());
+	return try_stream_load(next_req, width, height,
+		device_addr, chunk_name, suspend, instant_t::max());
 }
 
 struct draw_settings {
@@ -285,27 +309,6 @@ GLuint graphics_shader(const char *vpath, const char *fpath)
 	delete[] fsrc;
 	return shdr;
 }
-
-static constexpr glm::vec3 X{1.0f, 0.0f, 0.0f};
-static constexpr glm::vec3 Y{0.0f, 1.0f, 0.0f};
-static constexpr glm::vec3 Z{0.0f, 0.0f, 1.0f};
-
-static constexpr float start_sch_r = 2.0f;
-static constexpr float   end_sch_r = 2.0f;
-
-static constexpr float start_angle = 0.0f;
-static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
-
-static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
-static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
-
-static constexpr int default_width = 1280;
-static constexpr int default_height = 720;
-static constexpr size_t default_frames = 128;
-static constexpr size_t default_frame_time = 5000 / default_frames;
-static constexpr GLuint compute_local_dim = 4;
-static constexpr size_t default_iterations = 96;
-static constexpr size_t chunk_frame_count = 16;
 
 void sensible_texture_defaults(GLenum kind)
 {
@@ -407,8 +410,8 @@ int main(int argc, char **argv)
 	const auto quad_va = describe_va();
 	std::jthread io(io_worker, &current_io_work_type);
 
-	assert(sim_repr.frame_count % chunk_frame_count == 0);
-	assert(sim_repr.frame_count > chunk_frame_count);
+	assert(n_frames % chunk_frame_count == 0);
+	assert(n_frames > chunk_frame_count);
 
 	if (mode == OUTPUT) {
 		auto wreq = issue_open(io_work_type::open_write, sim_path);
@@ -499,13 +502,9 @@ int main(int argc, char **argv)
 	if (win) {
 		issue_open(io_work_type::open_read, sim_path);
 		complete_io_request();
-		blocking_load(&sim_repr, sizeof sim_repr, 0);
-		chunk_info_t chunk{
-			sim_repr.width, sim_repr.height, chunk_frame_count, sim_repr.ms_per_frame
-		};
-		const size_t chunk_pixels = sim_repr.width * sim_repr.height * chunk_frame_count;
+		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
-		const size_t chunk_count = sim_repr.frame_count / chunk_frame_count;
+		const size_t chunk_count = n_frames / chunk_frame_count;
 
 		GLuint pixel_transfer;
 		glGenBuffers(1, &pixel_transfer);
@@ -516,36 +515,37 @@ int main(int argc, char **argv)
 		char *streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0,
 			2 * chunk_size, pixel_transfer_flags | GL_MAP_UNSYNCHRONIZED_BIT);
 
-		assert(sim_repr.frame_count >= 2*chunk_frame_count);
-		blocking_load(streaming_memory, 2*chunk_size, sizeof sim_repr);
-		pixel_unpack(sim[0], chunk, 0);
-		pixel_unpack(sim[1], chunk, chunk_size);
+		off_t video_file_offset = sizeof sim_repr;
+		assert(n_frames >= 2*chunk_frame_count);
+		blocking_load(streaming_memory, 2*chunk_size, video_file_offset);
+		pixel_unpack(sim[0], width, height, 0);
+		pixel_unpack(sim[1], width, height, chunk_size);
 		fence_block(transfer_fence);
 		// rreq is made as if it produced the current state
-		auto rreq = blocking_load(streaming_memory, chunk_size, sizeof sim_repr + (2%chunk_count)*chunk_size);
+		auto rreq = blocking_load(streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size);
 
 		int upload_state = 0;
 		GLuint prev_chunk_index = 0;
 		size_t device_addr = chunk_size;
 		for (GLuint frame = 0; win; ++frame) {
 			const auto frame_start_time = clk::now();
-			const GLuint frame_index = back_and_forth(frame, sim_repr.frame_count-1);
+			const GLuint frame_index = back_and_forth(frame, n_frames - 1);
 			const GLuint chunk_index = frame_index / chunk_frame_count;
 			const GLuint buffer = chunk_index % 2;
 			const GLuint next_buffer = buffer ^ 1;
 			const GLuint buffer_index = frame_index % chunk_frame_count;
 			if (chunk_index != prev_chunk_index) {
-				force_stream_load(rreq, chunk, device_addr, sim[buffer], upload_state);
+				force_stream_load(rreq, width, height, device_addr, sim[buffer], upload_state);
 				const GLuint next_next_chunk_index =
-					back_and_forth(frame + 3*chunk_frame_count-1, sim_repr.frame_count-1) / chunk_frame_count;
+					back_and_forth(frame + 3*chunk_frame_count-1, n_frames - 1) / chunk_frame_count;
 				upload_state = 8;
 				device_addr = next_buffer * chunk_size;
 				rreq.buf = streaming_memory + buffer * chunk_size;
-				rreq.addr = sizeof sim_repr + next_next_chunk_index * chunk_size;
+				rreq.addr = video_file_offset + next_next_chunk_index * chunk_size;
 				prev_chunk_index = chunk_index;
 			} else {
 				const auto deadline = frame_start_time + frame_time/2;
-				const auto new_state = try_stream_load(rreq, chunk, device_addr,
+				const auto new_state = try_stream_load(rreq, width, height, device_addr,
 					sim[next_buffer], upload_state, deadline);
 				upload_state = new_state;
 			}

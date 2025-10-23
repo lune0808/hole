@@ -67,6 +67,10 @@ float smoothstep(float x)
 // completely heuristic
 float diff_intensity(vec3 y)
 {
+	if (accretion_min < y.x && y.x < accretion_max && y.y * y.y < 0.001) {
+	} else {
+		return 0.0;
+	}
 	float in_falloff = (y.x - accretion_min);
 	float out_falloff = (accretion_max - y.x);
 	float in_accretion_range = max(0.0, min(1.0, min(in_falloff, out_falloff)));
@@ -79,7 +83,7 @@ float diff_intensity(vec3 y)
 	float rscale = dscale - 2.0 * accretion_min;
 	float density = density_at_rstable * dscale / (rscale + y.x);
 	if (y.x < 2.0 * accretion_min) {
-		density = density_at_rstable * pow(smoothstep((y.x - accretion_min) / accretion_min), 8.0);
+		density = density_at_rstable * pow(smoothstep((y.x - accretion_min) / accretion_min), 2.0);
 	}
 	float local_light = in_disk * density;
 	float local_abso = in_disk * 0.05;
@@ -184,11 +188,12 @@ vec3 trace(vec3 start_ray)
 			break;
 		}
 		phi = y.z;
-		dphi_dt = b / (r * r) * (1.0 - sch_radius / r);
+		rho = 1.0 - sch_radius / r;
+		float rm3 = 1.0f / (r * r * r);
+		float ds = rho * dt * sqrt(1.0 + b * b * rm3 * sch_radius);
 		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
 		float ddisk = dot(radial, accretion_normal);
 		float rdisk = r * sqrt(1.0 - ddisk*ddisk);
-		float ds = sqrt(dr_dt*dr_dt + r*r * dphi_dt*dphi_dt) * dt;
 		light = rk4_intensity(rdisk, ddisk, light, ds);
 	}
 
