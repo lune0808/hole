@@ -59,17 +59,20 @@ const float accretion_height = 0.1;
 
 void integrate_intensity(float rdisk, float ddisk, inout float i, inout float transmittance, float h)
 {
+	if (rdisk < accretion_min || rdisk > accretion_max || ddisk * ddisk > 0.002) {
+		return;
+	}
 	float vertical = 1.0 - smoothstep(0.0, 0.0025 * rdisk / accretion_min, ddisk * ddisk);
 	float height = max(0.0, (accretion_height - rdisk * ddisk) / accretion_height);
 	float in_disk = smoothstep(1.3 * accretion_min, 2.0 * accretion_min, rdisk)
 	       * (1.0 - smoothstep(accretion_min * 2.0, accretion_max, rdisk))
 	       * vertical * vertical * pow(height, 0.2);
 	float d0 =  8.0 * (2.0 * accretion_max - rdisk) / accretion_max;
-	float d1 = 1.0 / (rdisk - 0.99 * accretion_min);
+	float d1 = 1.0 / (rdisk - 0.98 * accretion_min);
 	float density = in_disk * d0 * d1;
 	float local_light = density * d0 * 0.003 * max(0.0, accretion_max - rdisk);
 	float local_absorbancy = density * 1.30;
-	i += h * transmittance * max(0.0, local_light);
+	i += h * transmittance * max(local_light, 0.0);
 	transmittance *= exp(h * -local_absorbancy);
 }
 
