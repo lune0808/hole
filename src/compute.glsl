@@ -57,40 +57,20 @@ const float accretion_max = 25.0f;
 const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
 const float accretion_height = 0.1;
 
-// y = (rdisk, ddisk, i)
-// models di/ds = u[light energy density] - mu*i[absorptiveness of the cloud]
-// completely heuristic
-float diff_intensity(vec3 y)
+void integrate_intensity(float rdisk, float ddisk, inout float i, inout float transmittance, float h)
 {
-	if (accretion_min < y.x && y.x < accretion_max && y.y * y.y < 0.001) {
-	} else {
-		return 0.0;
-	}
-
-	float in_falloff = (y.x - accretion_min);
-	float out_falloff = (accretion_max - y.x);
-	float in_accretion_range = clamp(0.0, 1.0, min(in_falloff, out_falloff));
-	float axis_falloff = ((0.001 - y.y * y.y) * 1000.0);
-	float in_accretion_plane = clamp(0.0, 1.0, axis_falloff);
-	float in_disk = in_accretion_range * in_accretion_plane;
-	float density_at_rstable = 1.0;
-	float density_at_rmax = 0.1;
-	float dscale = (2.0 * accretion_min - accretion_max) / (1.0 - 1.0 / density_at_rmax);
-	float rscale = dscale - 2.0 * accretion_min;
-	float density = density_at_rstable * dscale / (rscale + y.x);
-	if (y.x < 2.0 * accretion_min) {
-		density = density_at_rstable * pow(smoothstep(accretion_min, 2.0*accretion_min, y.x), 2.0);
-	}
-	float local_light = in_disk * density;
-	float local_abso = in_disk * 0.05;
-	return local_light - local_abso * y.z;
-}
-
-float integrate_intensity(float rdisk, float ddisk, float i, float h)
-{
-	vec3 y = vec3(rdisk, ddisk, i);
-	float k1 = diff_intensity(y);
-	return y.z + h * k1;
+	float vertical = 1.0 - smoothstep(0.0, 0.0025 * rdisk / accretion_min, ddisk * ddisk);
+	float height = max(0.0, (accretion_height - rdisk * ddisk) / accretion_height);
+	float in_disk = smoothstep(1.3 * accretion_min, 2.0 * accretion_min, rdisk)
+	       * (1.0 - smoothstep(accretion_min * 2.0, accretion_max, rdisk))
+	       * vertical * vertical * pow(height, 0.2);
+	float d0 =  8.0 * (2.0 * accretion_max - rdisk) / accretion_max;
+	float d1 = 1.0 / (rdisk - 0.99 * accretion_min);
+	float density = in_disk * d0 * d1;
+	float local_light = density * d0 * 0.003 * max(0.0, accretion_max - rdisk);
+	float local_absorbancy = density * 1.30;
+	i += h * transmittance * max(0.0, local_light);
+	transmittance *= exp(h * -local_absorbancy);
 }
 
 vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
@@ -105,6 +85,7 @@ vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 
 float dt_scale(float x)
 {
+	return 6.5;
 	return min(5.0*x, x * x + 1.0);
 }
 
@@ -163,20 +144,22 @@ vec3 trace(vec3 start_ray)
 	}
 
 	float b = r * r * dphi_dt / rho;
-	// const float dt = sch_radius * 10.0 / float(iterations);
 	vec3 y = vec3(r, dr_dt, phi);
-	float hit = 0.0;
 	float light = 0.0;
+	float transmittance = 1.0;
 
 	for (uint iter = 0; iter < iterations; iter++) {
 		const float dt = dt_scale(y.x / sch_radius) * 1.0e+1 / float(iterations);
 		y = rk4(y, b, dt);
 		r = y.x;
 		if (abs(r) <= r_limit) {
-			hit = 1.0;
+			transmittance = 0.0;
 			break;
 		}
 		if (r > max(accretion_max * 3.0, 10.0 * sch_radius) && y.y > 0.0) {
+			break;
+		}
+		if (transmittance < 1e-4) {
 			break;
 		}
 		phi = y.z;
@@ -186,7 +169,7 @@ vec3 trace(vec3 start_ray)
 		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
 		float ddisk = dot(radial, accretion_normal);
 		float rdisk = r * sqrt(1.0 - ddisk*ddisk);
-		light = integrate_intensity(rdisk, ddisk, light, ds);
+		integrate_intensity(rdisk, ddisk, light, transmittance, ds);
 	}
 
 	r = y.x;
@@ -199,8 +182,9 @@ vec3 trace(vec3 start_ray)
 	ray_accel(r, b, dr_dt, dphi_dt, d2r_dt2);
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
 	vec3 sky = texture(skybox, ray).rgb;
+	sky = abs(ray);
 	vec3 ambient = vec3(0.03);
-	return ambient + (1.0-hit) * sky + light_shift(light);
+	return ambient + transmittance * sky + vec3(light);
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
