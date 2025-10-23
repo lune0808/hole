@@ -275,21 +275,12 @@ int try_stream_load(io_request req, GLuint width, GLuint height,
 	}
 }
 
-struct draw_settings {
-	GLuint shader;
-	GLuint quad_va;
-	GLuint frame_location;
-	float frame_value;
-	GLuint select_location;
-	float select_value;
-};
-
-void draw_quad(draw_settings set)
+void draw_quad(GLuint shader, GLuint quad_va, float frame, float select)
 {
-	glUseProgram(set.shader);
-	glUniform1f(set.frame_location, set.frame_value);
-	glUniform1f(set.select_location, set.select_value);
-	glBindVertexArray(set.quad_va);
+	glUseProgram(shader);
+	glUniform1f(2, frame);
+	glUniform1f(3, select);
+	glBindVertexArray(quad_va);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
@@ -467,13 +458,8 @@ int main(int argc, char **argv)
 			glDispatchCompute(compute_width, compute_height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
-			draw_settings set{
-				graphics_shdr, quad_va,
-				2, float(frame_index),
-				3, float(buffer),
-			};
-			draw_quad(set);
-			win.draw();
+			draw_quad(graphics_shdr, quad_va, float(frame_index), float(buffer));
+			win.present();
 
 			if (frame_index == chunk_frame_count-1) {
 				// technically this only needs to wait for the request
@@ -518,36 +504,35 @@ int main(int argc, char **argv)
 		auto rreq = blocking_load(streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size);
 
 		int upload_state = 0;
-		GLuint prev_chunk_index = 0;
+		GLuint prev_chunk = 0;
 		size_t device_addr = chunk_size;
-		for (GLuint frame = 0; win; ++frame) {
-			const auto frame_start_time = clk::now();
-			const GLuint frame_index = back_and_forth(frame, n_frames - 1);
-			const GLuint chunk_index = frame_index / chunk_frame_count;
-			const GLuint buffer = chunk_index % 2;
+		const auto start_time = clk::now();
+		for (GLuint present_frame = 0; win; ++present_frame) {
+			const GLuint anim_frame = back_and_forth(present_frame, n_frames - 1);
+			const GLuint chunk = anim_frame / chunk_frame_count;
+			const GLuint buffer = chunk % 2;
 			const GLuint next_buffer = buffer ^ 1;
-			const GLuint buffer_index = frame_index % chunk_frame_count;
+			const GLuint buffer_index = anim_frame % chunk_frame_count;
+			const auto frame_start_time = start_time + (present_frame-1) * frame_time;
 			const auto deadline = frame_start_time + frame_time/2;
 			upload_state = try_stream_load(rreq, width, height, device_addr,
 				sim[next_buffer], upload_state, deadline);
-			if (chunk_index != prev_chunk_index) {
-				const GLuint next_next_chunk_index =
-					back_and_forth(frame + 3*chunk_frame_count-1, n_frames - 1) / chunk_frame_count;
+			if (chunk != prev_chunk) {
+				const GLuint loading_frame = back_and_forth(
+					present_frame + 2*chunk_frame_count,
+					n_frames - 1
+				);
+				const GLuint loading_chunk = loading_frame / chunk_frame_count;
 				upload_state = 8;
 				device_addr = next_buffer * chunk_size;
 				rreq.buf = streaming_memory + buffer * chunk_size;
-				rreq.addr = video_file_offset + next_next_chunk_index * chunk_size;
-				prev_chunk_index = chunk_index;
+				rreq.addr = video_file_offset + loading_chunk * chunk_size;
+				prev_chunk = chunk;
 			}
 
-			draw_settings set{
-				graphics_shdr, quad_va,
-				2, float(buffer_index),
-				3, float(buffer),
-			};
-			draw_quad(set);
-			win.draw();
-			std::this_thread::sleep_until(frame_start_time + frame_time);
+			draw_quad(graphics_shdr, quad_va, float(buffer_index), float(buffer));
+			win.present();
+			std::this_thread::sleep_until(start_time + present_frame * frame_time);
 		}
 	}
 

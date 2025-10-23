@@ -119,7 +119,7 @@ struct window
 		return !glfwWindowShouldClose(handle);
 	}
 
-	void draw()
+	void present()
 	{
 		glfwSwapBuffers(handle);
 		glfwPollEvents();
