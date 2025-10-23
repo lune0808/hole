@@ -90,6 +90,10 @@ static GLsync transfer_fence;
 
 static constexpr auto poll_period = 1ms;
 
+using clk = std::chrono::steady_clock;
+using instant_t = std::chrono::time_point<clk>;
+using time_interval = std::chrono::nanoseconds;
+
 void io_worker(std::atomic<io_work_type> *type)
 {
 	std::ofstream os;
@@ -131,32 +135,32 @@ void io_worker(std::atomic<io_work_type> *type)
 	}
 }
 
-io_request issue_io_request(io_work_type type,
-	void *buf = nullptr, size_t size = 0, off_t addr = 0)
+bool issue_io_request(io_work_type type,
+	void *buf = nullptr, size_t size = 0, off_t addr = 0, instant_t deadline = instant_t::max())
 {
 	io_request req = io_request{buf, size, addr};
-#ifndef NDEBUG
-	const auto cur = current_io_work_type.load(std::memory_order_relaxed);
-#endif
-	assert(cur == io_work_type::none);
+	// since we only have 1 producer thread, this is fine
+	while (current_io_work_type.load(std::memory_order_relaxed) != io_work_type::none) {
+		if (clk::now() >= deadline) {
+			return false;
+		}
+		std::this_thread::sleep_for(poll_period);
+	}
 	current_io_request = req;
 	current_io_work_type.store(type, std::memory_order_release);
-	return req;
+	return true;
 }
 
-io_request issue_open(io_work_type type, const char *path)
+void issue_open(io_work_type type, const char *path)
 {
-	return issue_io_request(type, const_cast<char*>(path));
+	issue_io_request(type, const_cast<char*>(path));
 }
 
 bool io_completed()
 {
+	// we need acquire semantics to see the io operation's result in memory
 	return current_io_work_type.load(std::memory_order_acquire) == io_work_type::none;
 }
-
-using clk = std::chrono::steady_clock;
-using instant_t = std::chrono::time_point<clk>;
-using time_interval = std::chrono::nanoseconds;
 
 bool try_complete_io_request(instant_t deadline)
 {
@@ -178,8 +182,7 @@ bool try_complete_io_request(time_interval timeout)
 
 void complete_io_request()
 {
-	const auto status = try_complete_io_request(instant_t::max());
-	// assert(status);
+	try_complete_io_request(instant_t::max());
 }
 
 void complete_dump()
@@ -187,24 +190,23 @@ void complete_dump()
 	complete_io_request();
 }
 
-io_request issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
+void issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
 {
 	// this blocks until packing is done, also the floating point format is converted
 	// ideally we would keep floats and stream the texture using DSA
 	glGetTextureImage(chunk_name, 0, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, size, buf);
-	return issue_io_request(io_work_type::write, buf, size, addr);
+	issue_io_request(io_work_type::write, buf, size, addr);
 }
 
-io_request issue_load(void *buf, size_t size, off_t addr)
+bool issue_load(void *buf, size_t size, off_t addr, instant_t deadline = instant_t::max())
 {
-	return issue_io_request(io_work_type::read, buf, size, addr);
+	return issue_io_request(io_work_type::read, buf, size, addr, deadline);
 }
 
-io_request blocking_load(void *buf, size_t size, off_t addr)
+void blocking_load(void *buf, size_t size, off_t addr)
 {
-	auto req = issue_load(buf, size, addr);
+	issue_load(buf, size, addr);
 	complete_io_request();
-	return req;
 }
 
 bool fence_try_wait(GLsync fence, time_interval timeout)
@@ -219,10 +221,10 @@ bool fence_try_wait(GLsync fence, instant_t deadline)
 	return fence_try_wait(fence, deadline - clk::now());
 }
 
-bool fence_block(GLsync fence)
+void fence_block(GLsync fence)
 {
 	glFlush();
-	return fence_try_wait(fence, time_interval::max());
+	fence_try_wait(fence, time_interval::max());
 }
 
 void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr)
@@ -261,7 +263,9 @@ int try_stream_load(io_request req, GLuint width, GLuint height,
 		}
 		/* fallthrough */
 	case 2:
-		issue_load(req.buf, req.size, req.addr);
+		if (!issue_load(req.buf, req.size, req.addr, deadline)) {
+			return 2;
+		}
 		/* fallthrough */
 	case 1:
 		if (!try_complete_io_request(deadline)) {
@@ -406,9 +410,9 @@ int main(int argc, char **argv)
 	assert(n_frames > chunk_frame_count);
 
 	if (mode == OUTPUT) {
-		auto wreq = issue_open(io_work_type::open_write, sim_path);
+		issue_open(io_work_type::open_write, sim_path);
 		complete_io_request();
-		wreq = issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
+		issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
 		off_t write_addr = sizeof sim_repr;
 
 		auto compute_src = load_file("src/compute.glsl");
@@ -474,7 +478,7 @@ int main(int argc, char **argv)
 				// that was made for the previous issue with the same
 				// `buffer` index
 				complete_dump();
-				wreq = issue_dump(chunk_size, sim[buffer], write_addr, buf.get());
+				issue_dump(chunk_size, sim[buffer], write_addr, buf.get());
 				write_addr += chunk_size;
 			}
 
@@ -509,7 +513,8 @@ int main(int argc, char **argv)
 		pixel_unpack(sim[1], width, height, chunk_size);
 		fence_block(transfer_fence);
 		// rreq is made as if it produced the current state
-		auto rreq = blocking_load(streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size);
+		blocking_load(streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size);
+		io_request rreq{streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size};
 
 		int upload_state = 0;
 		GLuint prev_chunk = 0;
