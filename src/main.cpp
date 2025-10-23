@@ -275,13 +275,6 @@ int try_stream_load(io_request req, GLuint width, GLuint height,
 	}
 }
 
-bool force_stream_load(io_request next_req, GLuint width, GLuint height,
-	GLintptr device_addr, GLuint chunk_name, int suspend)
-{
-	return try_stream_load(next_req, width, height,
-		device_addr, chunk_name, suspend, instant_t::max());
-}
-
 struct draw_settings {
 	GLuint shader;
 	GLuint quad_va;
@@ -534,8 +527,10 @@ int main(int argc, char **argv)
 			const GLuint buffer = chunk_index % 2;
 			const GLuint next_buffer = buffer ^ 1;
 			const GLuint buffer_index = frame_index % chunk_frame_count;
+			const auto deadline = frame_start_time + frame_time/2;
+			upload_state = try_stream_load(rreq, width, height, device_addr,
+				sim[next_buffer], upload_state, deadline);
 			if (chunk_index != prev_chunk_index) {
-				force_stream_load(rreq, width, height, device_addr, sim[buffer], upload_state);
 				const GLuint next_next_chunk_index =
 					back_and_forth(frame + 3*chunk_frame_count-1, n_frames - 1) / chunk_frame_count;
 				upload_state = 8;
@@ -543,11 +538,6 @@ int main(int argc, char **argv)
 				rreq.buf = streaming_memory + buffer * chunk_size;
 				rreq.addr = video_file_offset + next_next_chunk_index * chunk_size;
 				prev_chunk_index = chunk_index;
-			} else {
-				const auto deadline = frame_start_time + frame_time/2;
-				const auto new_state = try_stream_load(rreq, width, height, device_addr,
-					sim[next_buffer], upload_state, deadline);
-				upload_state = new_state;
 			}
 
 			draw_settings set{
