@@ -28,12 +28,12 @@ static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
 static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
 static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
 
-static constexpr int default_width = 1280;
-static constexpr int default_height = 720;
-static constexpr size_t default_frames = 256;
-static constexpr size_t default_frame_time = 5000 / default_frames;
+static constexpr int default_width = 1600;
+static constexpr int default_height = 900;
+static constexpr size_t default_frames = 512;
+static constexpr size_t default_frame_time = 33;
 static constexpr GLuint compute_local_dim = 4;
-static constexpr size_t default_iterations = 368;
+static constexpr size_t default_iterations = 768;
 static constexpr size_t chunk_frame_count = 4;
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 

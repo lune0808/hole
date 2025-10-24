@@ -52,7 +52,7 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 3.0f;
+const float accretion_min = 3.5f;
 const float accretion_max = 25.0f;
 const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
 const float accretion_height = 0.1;
@@ -64,13 +64,13 @@ void integrate_intensity(float rdisk, float ddisk, inout float i, inout float tr
 	}
 	float vertical = 1.0 - smoothstep(0.0, 0.0025 * rdisk / accretion_min, ddisk * ddisk);
 	float height = max(0.0, (accretion_height - rdisk * ddisk) / accretion_height);
-	float in_disk = smoothstep(1.3 * accretion_min, 2.0 * accretion_min, rdisk)
+	float in_disk = smoothstep(1.0 * accretion_min, 2.0 * accretion_min, rdisk)
 	       * (1.0 - smoothstep(accretion_min * 2.0, accretion_max, rdisk))
 	       * vertical * vertical * pow(height, 0.2);
 	float d0 =  8.0 * (2.0 * accretion_max - rdisk) / accretion_max;
-	float d1 = 1.0 / (rdisk - 0.98 * accretion_min);
+	float d1 = 1.0 / (rdisk - 0.995 * accretion_min);
 	float density = in_disk * d0 * d1;
-	float local_light = density * d0 * 0.003 * max(0.0, accretion_max - rdisk);
+	float local_light = density * d0 * 0.0042 * max(0.0, accretion_max - rdisk);
 	float local_absorbancy = density * 1.30;
 	i += h * transmittance * max(local_light, 0.0);
 	transmittance *= exp(h * -local_absorbancy);
@@ -88,6 +88,7 @@ vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 
 float dt_scale(float x)
 {
+	return 20.0 * x;
 	return 6.5;
 	return min(5.0*x, x * x + 1.0);
 }
@@ -152,7 +153,7 @@ vec3 trace(vec3 start_ray)
 	float transmittance = 1.0;
 
 	for (uint iter = 0; iter < iterations; iter++) {
-		const float dt = dt_scale(y.x / sch_radius) * 1.0e+1 / float(iterations);
+		const float dt = dt_scale(y.x / sch_radius) / float(iterations);
 		y = rk4(y, b, dt);
 		r = y.x;
 		if (abs(r) <= r_limit) {
@@ -185,9 +186,8 @@ vec3 trace(vec3 start_ray)
 	ray_accel(r, b, dr_dt, dphi_dt, d2r_dt2);
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
 	vec3 sky = texture(skybox, ray).rgb;
-	sky = abs(ray);
 	vec3 ambient = vec3(0.03);
-	return ambient + transmittance * sky + vec3(light);
+	return ambient + transmittance * sky + light_shift(light);
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
