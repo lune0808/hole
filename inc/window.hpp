@@ -95,6 +95,12 @@ struct window
 
 	window(int width, int height, glfw_context &)
 	{
+		if (width == 0 && height == 0) {
+			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+			width = 1920;
+			height = 1080;
+		}
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -117,6 +123,13 @@ struct window
 	operator bool() const
 	{
 		return !glfwWindowShouldClose(handle);
+	}
+
+	void resize(int width, int height)
+	{
+		glfwShowWindow(handle);
+		glfwSetWindowSize(handle, width, height);
+		glViewport(0, 0, width, height);
 	}
 
 	void present()

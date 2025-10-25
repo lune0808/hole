@@ -1,16 +1,10 @@
-#version 430 core
+// include src/shared_data.glsl
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 1) in;
 uniform layout(binding=0,r11f_g11f_b10f) writeonly restrict image2D screen;
-layout(std430,binding=1) readonly restrict buffer scene
+layout(std430,binding=1) readonly restrict buffer scene_spec
 {
-	vec4 q_orientation;
-	vec3 cam_pos;
-	float inv_screen_width;
-	vec3 sphere_pos;
-	float focal_length;
-	float sch_radius;
-	uint iterations;
+	scene_state scene;
 };
 uniform layout(location=2) samplerCube skybox;
 
@@ -18,11 +12,11 @@ const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
 
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
-	float rho = 1.0 - sch_radius / r;
+	float rho = 1.0 - scene.sch_radius / r;
 	float rm2 = 1.0f / (r * r);
 	dphi_dt = b * rm2 * rho;
-	d2r_dt2 = sch_radius * rho * rm2 * (1.0 - b * b * rho * rm2)
-		+ (r * rho - 0.5 * sch_radius) * dphi_dt * dphi_dt;
+	d2r_dt2 = scene.sch_radius * rho * rm2 * (1.0 - b * b * rho * rm2)
+		+ (r * rho - 0.5 * scene.sch_radius) * dphi_dt * dphi_dt;
 }
 
 // y = (r, dr/dt, phi)
@@ -124,8 +118,8 @@ vec3 light_shift(float intensity)
 vec3 trace(vec3 start_ray)
 {
 	vec3 ray = start_ray;
-	vec3 pos = cam_pos;
-	vec3 start_radial = pos - sphere_pos;
+	vec3 pos = scene.cam_pos;
+	vec3 start_radial = pos - scene.sphere_pos;
 	vec3 start_radial_n = normalize(start_radial);
 	vec3 orbital_axis = normalize(cross(start_radial, ray));
 	float r = length(start_radial);
@@ -134,7 +128,7 @@ vec3 trace(vec3 start_ray)
 	// so we flush photons who are orbiting too close
 	// inside, which also reduces the repetitions we see
 	// in the photon sphere
-	float r_limit = sch_radius + 1e-4;
+	float r_limit = scene.sch_radius + 1e-4;
 	if (r <= r_limit) {
 		return vec3(0.0);
 	}
@@ -152,7 +146,7 @@ vec3 trace(vec3 start_ray)
 	float dev_angular = dot(ray, start_angular_n); // always >= 0
 	float dphi_dt;
 	float dr_dt;
-	float rho = 1.0 - sch_radius / r;
+	float rho = 1.0 - scene.sch_radius / r;
 	// compute dr/dphi or dphi/dr whichever doesn't blow up
 	if (dev_angular > 0.707) {
 		float looking_at = abs(dev_radial) / dev_angular;
@@ -169,24 +163,23 @@ vec3 trace(vec3 start_ray)
 	float light = 0.0;
 	float transmittance = 1.0;
 
-	for (uint iter = 0; iter < iterations; iter++) {
-		const float dt = dt_scale(y.x / sch_radius) / float(iterations);
-		y = rk4(y, b, dt);
+	for (uint iter = 0; iter < scene.iterations; iter++) {
+		y = rk4(y, b, scene.dt);
 		r = y.x;
 		if (abs(r) <= r_limit) {
 			transmittance = 0.0;
 			break;
 		}
-		if (r > max(accretion_max * 3.0, 10.0 * sch_radius) && y.y > 0.0) {
+		if (r > max(accretion_max * 3.0, 10.0 * scene.sch_radius) && y.y > 0.0) {
 			break;
 		}
 		if (transmittance < 1e-4) {
 			break;
 		}
 		phi = y.z;
-		rho = 1.0 - sch_radius / r;
+		rho = 1.0 - scene.sch_radius / r;
 		float rm3 = 1.0f / (r * r * r);
-		float ds = rho * dt * sqrt(1.0 + b * b * rm3 * sch_radius);
+		float ds = rho * scene.dt * sqrt(1.0 + b * b * rm3 * scene.sch_radius);
 		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
 		// world pos = mass origin + r * radial
 		float disk_angle = atan(dot(radial, accretion_z), dot(radial, accretion_x));
@@ -199,7 +192,7 @@ vec3 trace(vec3 start_ray)
 	phi = y.z;
 	vec3 end_radial  = rotate_axis(orbital_axis, phi, start_radial_n);
 	vec3 end_angular = cross(orbital_axis, end_radial);
-	pos = sphere_pos + r * end_radial;
+	pos = scene.sphere_pos + r * end_radial;
 	float d2r_dt2;
 	ray_accel(r, b, dr_dt, dphi_dt, d2r_dt2);
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
@@ -216,8 +209,8 @@ vec3 rotate_quat(vec4 q, vec3 v)
 
 vec4 color(ivec2 coord)
 {
-	vec2 pixel = vec2(coord.x * inv_screen_width - 0.5, coord.y * inv_screen_width - 0.5);
-	vec3 start_ray = normalize(rotate_quat(q_orientation, vec3(pixel, -focal_length)));
+	vec2 pixel = vec2(coord.x * scene.inv_screen_width - 0.5, coord.y * scene.inv_screen_width - 0.5);
+	vec3 start_ray = normalize(rotate_quat(scene.q_orientation, vec3(pixel, -scene.focal_length)));
 	return vec4(trace(start_ray), 1.0);
 }
 

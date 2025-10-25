@@ -10,30 +10,13 @@
 #include <glm/glm.hpp>
 #include "window.hpp"
 #include "shader.hpp"
+#include "skybox_id.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
 using namespace std::chrono_literals;
 
-static constexpr glm::vec3 X{1.0f, 0.0f, 0.0f};
-static constexpr glm::vec3 Y{0.0f, 1.0f, 0.0f};
-static constexpr glm::vec3 Z{0.0f, 0.0f, 1.0f};
-
-static constexpr float start_sch_r = 2.0f;
-static constexpr float   end_sch_r = 2.0f;
-
-static constexpr float start_angle = 0.0f;
-static constexpr float   end_angle = std::numbers::pi_v<float> / 6.0f;
-
-static constexpr glm::vec3   end_pos = start_sch_r * (-2.0f*X+2.0f*Z);
-static constexpr glm::vec3 start_pos = end_pos + start_sch_r * (+15.0f*Z+4.0f*Y);
-
-static constexpr int default_width = 1280;
-static constexpr int default_height = 720;
-static constexpr size_t default_frames = 128;
-static constexpr size_t default_frame_time = 33;
 static constexpr GLuint compute_local_dim = 4;
-static constexpr size_t default_iterations = 368;
 static constexpr size_t chunk_frame_count = 4;
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
@@ -292,16 +275,6 @@ void draw_quad(GLuint shader, GLuint quad_va, float frame, float select)
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
-GLuint graphics_shader(const char *vpath, const char *fpath)
-{
-	auto vsrc = load_file(vpath);
-	auto fsrc = load_file(fpath);
-	auto shdr = build_shader(vsrc, fsrc);
-	delete[] vsrc;
-	delete[] fsrc;
-	return shdr;
-}
-
 enum texture_settings {
 	use_mipmaps = 1 << 0,
 };
@@ -370,10 +343,71 @@ GLuint back_and_forth(GLuint index_, GLuint max_value_)
 	return max_value - std::abs(index % (2 * max_value) - max_value);
 }
 
+struct shaders_text_blob
+{
+	using buffer = std::span<char>;
+	std::unique_ptr<char[]> memory;
+	buffer quad_vs;
+	buffer quad_fs;
+	buffer sim_cs;
+	buffer script;
+};
+
+shaders_text_blob load_all_shaders(const char *vs, const char *fs, const char *cs, const char *sc)
+{
+	shaders_text_blob sh;
+	const auto vs_sz = file_size(vs);
+	const auto fs_sz = file_size(fs);
+	const auto cs_sz = file_size(cs); // includes src/shared_data.glsl
+	const auto sc_sz = file_size(sc); // includes src/shared_data.glsl, inc/skybox_id.hpp, src/script_include.glsl
+	static constexpr const char *const shared = "src/shared_data.glsl";
+	const auto shared_sz = file_size(shared);
+	static constexpr const char *const skybox_id = "inc/skybox_id.hpp";
+	const auto skybox_id_sz = file_size(skybox_id);
+	static constexpr const char *const include = "src/script_include.glsl";
+	const auto include_sz = file_size(include);
+	static constexpr const char *const include_main = "src/script_include_main.glsl";
+	const auto include_main_sz = file_size(include_main);
+	sh.memory = std::make_unique<char[]>(
+		+ vs_sz
+		+ fs_sz
+		+ shared_sz + cs_sz
+		+ shared_sz + skybox_id_sz + include_sz + sc_sz + include_main_sz
+	);
+	sh.quad_vs = std::span{sh.memory.get(), vs_sz};
+	sh.quad_fs = std::span{sh.quad_vs.data() + sh.quad_vs.size(), fs_sz};
+	sh.sim_cs = std::span{sh.quad_fs.data() + sh.quad_fs.size(), shared_sz + cs_sz};
+	sh.script = std::span{sh.sim_cs.data() + sh.sim_cs.size(), shared_sz + skybox_id_sz + include_sz + sc_sz + include_main_sz};
+	load_file(vs, sh.quad_vs, '\0');
+	load_file(fs, sh.quad_fs, '\0');
+	load_file(shared, sh.sim_cs.data(), shared_sz, '\n');
+	load_file(cs, sh.sim_cs.data() + shared_sz, cs_sz, '\0');
+	std::memcpy(sh.script.data(), sh.sim_cs.data(), shared_sz);
+	load_file(skybox_id, sh.script.data() + shared_sz, skybox_id_sz, '\n');
+	load_file(include, sh.script.data() + shared_sz + skybox_id_sz, include_sz, '\n');
+	load_file(sc, sh.script.data() + shared_sz + skybox_id_sz + include_sz, sc_sz, '\n');
+	load_file(include_main, sh.script.data() + shared_sz + skybox_id_sz + include_sz + sc_sz, include_main_sz, '\0');
+	return sh;
+}
+
+shaders_text_blob load_draw_shaders(const char *vs, const char *fs)
+{
+	shaders_text_blob sh;
+	const auto vs_sz = file_size(vs);
+	const auto fs_sz = file_size(fs);
+	sh.memory = std::make_unique<char[]>(vs_sz + fs_sz);
+	sh.quad_vs = std::span{sh.memory.get(), vs_sz};
+	sh.quad_fs = std::span{sh.quad_vs.data() + sh.quad_vs.size(), fs_sz};
+	load_file(vs, sh.quad_vs, '\0');
+	load_file(fs, sh.quad_fs, '\0');
+	return sh;
+}
+
 int main(int argc, char **argv)
 {
 	enum { OUTPUT, INPUT, RECOVER } mode = OUTPUT;
 	const char *sim_path = "/tmp/black_hole_sim_data.bin";
+	const char *sc_path = "script/move1.glsl";
 	if (argc == 3 && std::strcmp(argv[1], "-o") == 0) {
 		sim_path = argv[2];
 	} else if (argc == 3 && std::strcmp(argv[1], "-r") == 0) {
@@ -402,33 +436,58 @@ int main(int argc, char **argv)
 				mode = OUTPUT;
 			}
 		}
-	} else {
-		sim_repr.width = default_width;
-		sim_repr.height = default_height;
-		sim_repr.frame_count = default_frames;
-		sim_repr.ms_per_frame = default_frame_time;
 	}
-	const int width = sim_repr.width;
-	const int height = sim_repr.height;
-	const size_t n_frames = sim_repr.frame_count;
-	const std::chrono::milliseconds frame_time{sim_repr.ms_per_frame};
 	glfw_context glfw{};
-	window win(width, height, glfw);
-	const auto graphics_shdr = graphics_shader("src/vertex.glsl", "src/fragment.glsl");
-
-	GLuint sim[2];
-	sim[0] = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
-	if (n_frames > chunk_frame_count) {
-		sim[1] = texture_array(GL_TEXTURE1, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+	window win(0, 0, glfw);
+	GLuint graphics_shdr;
+	GLuint compute_shdr;
+	GLuint script;
+	if (mode == OUTPUT || mode == RECOVER) {
+		const auto sh_text = load_all_shaders("src/vertex.glsl", "src/fragment.glsl", "src/compute.glsl", sc_path);
+		graphics_shdr = build_shader(sh_text.quad_vs.data(), sh_text.quad_fs.data());
+		compute_shdr = build_shader(sh_text.sim_cs.data());
+		script = build_shader(sh_text.script.data());
+	} else if (mode == INPUT) {
+		const auto sh_text = load_draw_shaders("src/vertex.glsl", "src/fragment.glsl");
+		graphics_shdr = build_shader(sh_text.quad_vs.data(), sh_text.quad_fs.data());
 	}
 
 	const auto quad_va = describe_va();
 	std::jthread io(io_worker, &current_io_work_type);
 
-	assert(n_frames % chunk_frame_count == 0);
-	assert(n_frames > chunk_frame_count);
-
 	if (mode == OUTPUT || mode == RECOVER) {
+		GLuint scene_state;
+		glCreateBuffers(1, &scene_state);
+		glNamedBufferStorage(scene_state, 4*sizeof(glm::vec4), nullptr, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, scene_state);
+		GLuint scene_settings;
+		glCreateBuffers(1, &scene_settings);
+		glNamedBufferStorage(scene_settings, (2*4 + 2) * sizeof(glm::vec4), nullptr, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, scene_settings);
+
+		struct {
+			GLint width;
+			GLint height;
+			GLuint n_frames;
+			GLuint ms_per_frame;
+			GLuint skybox_id;
+			float fov;
+		} window_settings;
+		glUseProgram(script);
+		glUniform1f(2 /* progress */, -1.0f);
+		glDispatchCompute(1, 1, 1);
+		glFinish();
+
+		glGetNamedBufferSubData(scene_settings, 2*4 * sizeof(glm::vec4), sizeof(window_settings), &window_settings);
+		assert(window_settings.width > 0 && window_settings.height > 0);
+		win.resize(window_settings.width, window_settings.height);
+		assert(window_settings.skybox_id < std::size(skybox_fmt));
+		const GLuint skybox = load_skybox(GL_TEXTURE2, skybox_fmt[window_settings.skybox_id]);
+		const size_t width = sim_repr.width = window_settings.width;
+		const size_t height = sim_repr.height = window_settings.height;
+		const size_t n_frames = sim_repr.frame_count = window_settings.n_frames;
+		sim_repr.ms_per_frame = window_settings.ms_per_frame;
+
 		issue_open((mode == OUTPUT)? io_work_type::open_write: io_work_type::open_recover, sim_path);
 		complete_io_request();
 		issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
@@ -436,35 +495,9 @@ int main(int argc, char **argv)
 		const size_t chunk_size = chunk_pixels * host_pixel_size;
 		off_t write_addr = sizeof sim_repr + recover_chunk * chunk_size;
 
-		auto compute_src = load_file("src/compute.glsl");
-		const auto compute_shdr = build_shader(compute_src);
-		delete[] compute_src;
-
-		GLuint skybox = load_skybox(GL_TEXTURE2, "res/sky_%s.png");
-
-		struct
-		{
-			glm::vec4 q_orientation;
-			glm::vec3 cam_pos;
-			float inv_screen_width;
-			glm::vec3 sphere_pos;
-			float focal_length;
-			float sch_radius;
-			GLuint iterations;
-			unsigned char __padding[8];
-		} data;
-
-		data.sphere_pos = glm::vec3{2.0f, 0.0f, -2.0f};
-		static constexpr float fov = std::numbers::pi_v<float> / 3.0f;
-		data.inv_screen_width = 1.0f / float(width);
-		data.focal_length = 0.5f / std::tan(fov * 0.5f);
-		data.iterations = default_iterations;
-
-		GLuint ssb;
-		glGenBuffers(1, &ssb);
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssb);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof data, &data, GL_DYNAMIC_DRAW);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1 /* binding */, ssb);
+		GLuint sim[2];
+		sim[0] = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+		sim[1] = texture_array(GL_TEXTURE1, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
 
 		glProgramUniform1i(compute_shdr, 2 /* skybox */, 2 /* GL_TEXTURE2 */);
 		glProgramUniform1i(graphics_shdr, 0 /* screen0 */, 0);
@@ -478,14 +511,14 @@ int main(int argc, char **argv)
 			const GLuint buffer = (i_frame / chunk_frame_count) % 2;
 			const GLuint frame_index = i_frame % chunk_frame_count;
 			float progress = smoothstep(float(i_frame) / float(n_frames-1));
-			const float angle = glm::mix(start_angle, end_angle, progress);
-			data.q_orientation = glm::vec4{std::sin(angle * 0.5f) * Y, std::cos(angle * 0.5f)};
-			data.cam_pos = glm::mix(start_pos, end_pos, progress);
-			data.sch_radius = glm::mix(start_sch_r, end_sch_r, progress);
+
+			glUseProgram(script);
+			glUniform1f(2 /* progress */, progress);
+			glDispatchCompute(1, 1, 1);
+			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 			glUseProgram(compute_shdr);
 			enable_sim_frame(0, sim[buffer], frame_index, GL_R11F_G11F_B10F);
-			glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof data, &data);
 			glDispatchCompute(compute_width, compute_height, 1);
 			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
@@ -511,7 +544,18 @@ int main(int argc, char **argv)
 		complete_io_request();
 	}
 
+	assert(sim_repr.frame_count % chunk_frame_count == 0);
+	assert(sim_repr.frame_count > chunk_frame_count);
+
+	const auto width = sim_repr.width;
+	const auto height = sim_repr.height;
+	const auto n_frames = sim_repr.frame_count;
+	GLuint sim[2];
+	sim[0] = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+	sim[1] = texture_array(GL_TEXTURE1, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+
 	if (win) {
+		win.resize(width, height);
 		issue_open(io_work_type::open_read, sim_path);
 		complete_io_request();
 		const size_t chunk_pixels = width * height * chunk_frame_count;
@@ -541,6 +585,7 @@ int main(int argc, char **argv)
 		GLuint prev_chunk = 0;
 		size_t device_addr = chunk_size;
 		const auto start_time = clk::now();
+		const std::chrono::milliseconds frame_time{sim_repr.ms_per_frame};
 		for (GLuint present_frame = 0; win; ++present_frame) {
 			const GLuint anim_frame = back_and_forth(present_frame, n_frames - 1);
 			const GLuint chunk = anim_frame / chunk_frame_count;

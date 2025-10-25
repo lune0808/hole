@@ -64,14 +64,21 @@ GLuint build_shader(const char *comp_src)
 	return id;
 }
 
-char *load_file(const char *path)
+size_t file_size(const char *path)
 {
 	std::ifstream file(path);
 	file.seekg(0, std::ios_base::end);
-	const size_t size = file.tellg();
-	file.seekg(0, std::ios_base::beg);
-	auto buf = new char[size+1];
-	file.read(buf, size);
-	buf[size] = '\0';
-	return buf;
+	return size_t(file.tellg()) + 1u /* for terminator */;
+}
+
+void load_file(const char *path, char *buf, size_t size, char terminator)
+{
+	std::ifstream file(path);
+	file.read(buf, size - 1);
+	buf[size - 1] = terminator;
+}
+
+void load_file(const char *path, std::span<char> buf, char terminator)
+{
+	load_file(path, buf.data(), buf.size(), terminator);
 }
