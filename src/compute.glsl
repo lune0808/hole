@@ -8,8 +8,6 @@ layout(std430,binding=1) readonly restrict buffer scene_spec
 };
 uniform layout(location=2) samplerCube skybox;
 
-const vec3 light_pos = vec3(-1.0, 2.0, 1.0);
-
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
 	float rho = 1.0 - scene.sch_radius / r;
@@ -46,14 +44,6 @@ vec3 rk4(vec3 y, float b, float h)
 	return y + h * inv6 * (k1 + 2.0*k2 + 2.0*k3 + k4);
 }
 
-const float accretion_min = 4.5f;
-const float accretion_max = 35.0f;
-const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
-const vec3 X = vec3(1.0, 0.0, 0.0);
-const vec3 accretion_x = normalize(cross(accretion_normal, X));
-const vec3 accretion_z = normalize(cross(accretion_x, accretion_normal));
-const float accretion_height = 3.5;
-
 // Taken from http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl.
 vec3 hsv2rgb(vec3 c)
 {
@@ -62,29 +52,36 @@ vec3 hsv2rgb(vec3 c)
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
+const float accretion_min = 4.5f;
+const float accretion_max = 35.0f;
+const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
+const vec3 X = vec3(1.0, 0.0, 0.0);
+const vec3 accretion_x = normalize(cross(accretion_normal, X));
+const vec3 accretion_z = normalize(cross(accretion_x, accretion_normal));
+const float accretion_height = 3.5;
+
 void integrate_intensity(float r, float phi, float y, inout float i, inout float transmittance, float h)
 {
-	if (r < accretion_min || r > accretion_max || abs(y) > accretion_height) {
+	if (r < scene.accr_min_r || r > scene.accr_max_r || abs(y) > scene.accr_height) {
 		return;
 	}
-	const float r0 = -1.0 * accretion_min;
-	const float y0 = accretion_height / ((accretion_max - r0) * (accretion_max - r0));
+	const float r0 = -1.0 * scene.accr_min_r;
+	const float y0 = scene.accr_height / ((scene.accr_max_r - r0) * (scene.accr_max_r - r0));
 	float y_bound = y0 * (r - r0) * (r - r0);
 	float y_modulate = 1.0 - smoothstep(0.0, y_bound*y_bound, y*y);
 	const float two_pi = 6.2831853;
 	// i = mod(phi, two_pi) / two_pi;
-	float r_modulate = 1.0 - smoothstep(accretion_min, accretion_max, r);
+	float r_modulate = 1.0 - smoothstep(scene.accr_min_r, scene.accr_max_r, r);
 	float in_disk = y_modulate * r_modulate;
-	float l1 = 0.65;
-	float l0 = l1 * (1.0 - accretion_min * 0.85 / r);
+	float l0 = scene.accr_light * (1.0 - scene.accr_min_r * scene.accr_light2 / r);
 	float a = 1.0;
 	float density = in_disk * r_modulate * a * a;
 	float local_light = density * r_modulate / l0;
-	float local_absorbancy = density * 4.0;
+	float local_absorbance = density * scene.accr_abso;
 	i += h * transmittance * local_light;
-	transmittance *= exp(h * -local_absorbancy);
+	transmittance *= exp(h * -local_absorbance);
 	// t*exp(x) = t*(1+x+o(x))
-	// transmittance += h * -local_absorbancy * transmittance;
+	// transmittance += h * -local_absorbance * transmittance;
 }
 
 vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
@@ -182,8 +179,8 @@ vec3 trace(vec3 start_ray)
 		float ds = rho * scene.dt * sqrt(1.0 + b * b * rm3 * scene.sch_radius);
 		vec3 radial = rotate_axis(orbital_axis, phi, start_radial_n);
 		// world pos = mass origin + r * radial
-		float disk_angle = atan(dot(radial, accretion_z), dot(radial, accretion_x));
-		float ydisk = r * dot(radial, accretion_normal);
+		float disk_angle = atan(dot(radial, scene.accr_z), dot(radial, scene.accr_x));
+		float ydisk = r * dot(radial, scene.accr_normal);
 		integrate_intensity(r, disk_angle, ydisk, light, transmittance, ds);
 	}
 

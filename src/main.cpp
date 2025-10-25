@@ -458,7 +458,7 @@ int main(int argc, char **argv)
 	if (mode == OUTPUT || mode == RECOVER) {
 		GLuint scene_state;
 		glCreateBuffers(1, &scene_state);
-		glNamedBufferStorage(scene_state, 4*sizeof(glm::vec4), nullptr, 0);
+		glNamedBufferStorage(scene_state, 8*sizeof(glm::vec4), nullptr, 0);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, scene_state);
 		GLuint scene_settings;
 		glCreateBuffers(1, &scene_settings);

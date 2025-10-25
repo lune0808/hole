@@ -38,6 +38,18 @@ void init()
 	win.ms_per_frame = 33;
 	win.skybox_id = SKYBOX_GENERIC;
 	win.fov = PI/3.0;
+
+	vec3 accr_y = normalize(vec3(0.1, 0.9, -0.1));
+	vec3 accr_x = normalize(cross(accr_y, X));
+	scene.accr_normal = accr_y;
+	scene.accr_x = accr_x;
+	scene.accr_z = normalize(cross(accr_x, accr_y));
+	scene.accr_min_r = 4.5;
+	scene.accr_max_r = 35.0;
+	scene.accr_height = 3.5;
+	scene.accr_light = 0.65;
+	scene.accr_light2 = 0.85;
+	scene.accr_abso = 4.0;
 }
 
 void loop()

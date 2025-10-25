@@ -12,6 +12,19 @@ struct scene_state {
 	uint iterations;
 	float dt;
 	float inv_screen_width;
+	float accr_light;
+
+	vec3 accr_normal;
+	float accr_height;
+
+	vec3 accr_x;
+	float accr_min_r;
+
+	vec3 accr_z;
+	float accr_max_r;
+
+	float accr_abso;
+	float accr_light2;
 };
 
 #define PI 3.1415927
