@@ -50,6 +50,9 @@ void init()
 	scene.accr_light = 0.65;
 	scene.accr_light2 = 0.85;
 	scene.accr_abso = 4.0;
+	scene.red_exponent   = 1.0;
+	scene.green_exponent = 3.0;
+	scene.blue_exponent  = 9.0;
 }
 
 void loop()

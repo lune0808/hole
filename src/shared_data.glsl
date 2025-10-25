@@ -25,6 +25,10 @@ struct scene_state {
 
 	float accr_abso;
 	float accr_light2;
+	float red_exponent;
+	float green_exponent;
+
+	float blue_exponent;
 };
 
 #define PI 3.1415927

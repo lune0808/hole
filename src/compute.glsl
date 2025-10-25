@@ -103,12 +103,9 @@ float dt_scale(float x)
 
 vec3 light_shift(float intensity)
 {
-	float r0 = 1.0;
-	float g0 = 3.0;
-	float b0 = 9.0;
-	float r = pow(intensity, r0);
-	float g = pow(intensity, g0);
-	float b = pow(intensity, b0);
+	float r = pow(intensity, scene.red_exponent);
+	float g = pow(intensity, scene.green_exponent);
+	float b = pow(intensity, scene.blue_exponent);
 	return vec3(r, g, b);
 }
 
