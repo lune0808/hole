@@ -10,7 +10,7 @@ vec3 rotate_quat(vec4 q, vec3 v)
 	return v + 2.0 * cross(q.xyz, q.w * v + cross(q.xyz, v));
 }
 
-const float dt = 0.15;
+const float dt = 0.20;
 
 void init()
 {
@@ -29,8 +29,8 @@ void init()
 	beg.dt = dt;
 	end.dt = dt;
 
-	beg.iterations = 384;
-	end.iterations = 384;
+	beg.iterations = 512;
+	end.iterations = 512;
 
 	win.screen_width = 1280;
 	win.screen_height = 720;
