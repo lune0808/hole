@@ -122,7 +122,7 @@ vec3 trace(vec3 start_ray)
 	// so we flush photons who are orbiting too close
 	// inside, which also reduces the repetitions we see
 	// in the photon sphere
-	float r_limit = scene.sch_radius + 1e-4;
+	float r_limit = scene.sch_radius + 0e-4;
 	if (r <= r_limit) {
 		return vec3(0.0);
 	}

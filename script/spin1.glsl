@@ -10,18 +10,18 @@ vec3 rotate_quat(vec4 q, vec3 v)
 	return v + 2.0 * cross(q.xyz, q.w * v + cross(q.xyz, v));
 }
 
-const float dt = 0.20;
-const uint iterations = 512;
+const float dt = 0.10;
+const uint iterations = 1536;
 
 void init()
 {
-	beg.q_orientation = quat(Y, 0.0);
-	end.q_orientation = quat(Y, PI/6.0);
+	beg.q_orientation = quat(Z, 0.0);
+	end.q_orientation = quat(Z, 1.0*PI);
 
-	beg.cam_pos = -4.0*X + 32.0*Z + 8.0*Y;
-	end.cam_pos = -4.0*X + 4.0*Z;
+	beg.cam_pos = +40.0*Z + 10.0*Y;
+	end.cam_pos = +40.0*Z - 10.0*Y;
 
-	beg.r_s = 2.0;
+	beg.r_s = 0.0;
 	end.r_s = 2.0;
 
 	beg.sphere_pos = 2.0*X - 2.0*Z;
@@ -35,7 +35,7 @@ void init()
 
 	win.screen_width = 1280;
 	win.screen_height = 720;
-	win.n_frames = 128;
+	win.n_frames = 256;
 	win.ms_per_frame = 33;
 	win.skybox_id = SKYBOX_GENERIC;
 	win.fov = PI/3.0;
@@ -47,14 +47,14 @@ void init()
 	scene.accr_z = normalize(cross(accr_x, accr_y));
 	scene.accr_min_r = 4.5;
 	scene.accr_max_r = 35.0;
-	scene.accr_height = 3.5;
-	scene.accr_light = 0.65;
+	scene.accr_height = 1.8;
+	scene.accr_light = 2.0;
 	scene.accr_light2 = 0.85;
-	scene.accr_abso = 4.0;
+	scene.accr_abso = 0.55;
 
-	scene.red_exponent   = 1.0;
-	scene.green_exponent = 3.0;
-	scene.blue_exponent  = 9.0;
+	scene.red_exponent   = 2.7;
+	scene.green_exponent = 1.60;
+	scene.blue_exponent  = 1.04;
 }
 
 void loop()
