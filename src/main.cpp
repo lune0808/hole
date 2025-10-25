@@ -403,29 +403,63 @@ shaders_text_blob load_draw_shaders(const char *vs, const char *fs)
 	return sh;
 }
 
+enum cmd_type { OUTPUT, INPUT, RECOVER };
+
+struct command_line {
+	const char *sim_path;
+	const char *script_path;
+	cmd_type mode;
+};
+
+command_line parse(int argc, char **argv)
+{
+	static constexpr const char *const default_sim_path = "/tmp/black_hole_sim_data.rgbf32";
+	command_line cl;
+	if (argc == 3 && std::strcmp(argv[1], "-i") == 0) {
+		cl.mode = INPUT;
+		cl.sim_path = argv[2];
+	} else if (argc == 2) {
+		cl.mode = OUTPUT;
+		cl.sim_path = default_sim_path;
+		cl.script_path = argv[1];
+	} else if (argc == 4) {
+		cl.script_path = argv[1];
+		cl.sim_path = argv[3];
+		if (std::strcmp(argv[2], "-r") == 0) {
+			cl.mode = RECOVER;
+		} else if (std::strcmp(argv[2], "-o") == 0) {
+			cl.mode = OUTPUT;
+		} else {
+			goto usage;
+		}
+	} else if (argc == 6) {
+		if (std::strcmp(argv[2], "-r") != 0 || std::strcmp(argv[4], "-o") != 0) {
+			goto usage;
+		}
+		cl.mode = RECOVER;
+		cl.sim_path = argv[5];
+		cl.script_path = argv[1];
+	} else {
+	usage:
+		std::printf("usage:\n");
+		std::printf("%s <script>.glsl [-r <partial-file>] [-o <output-file>]\n", argv[0]);
+		std::printf("%s -i <input-file>\n", argv[0]);
+		std::exit(1);
+	}
+	return cl;
+}
+
 int main(int argc, char **argv)
 {
-	enum { OUTPUT, INPUT, RECOVER } mode = OUTPUT;
-	const char *sim_path = "/tmp/black_hole_sim_data.bin";
-	const char *sc_path = "script/move1.glsl";
-	if (argc == 3 && std::strcmp(argv[1], "-o") == 0) {
-		sim_path = argv[2];
-	} else if (argc == 3 && std::strcmp(argv[1], "-r") == 0) {
-		sim_path = argv[2];
-		mode = RECOVER;
-	} else if (argc == 2) {
-		sim_path = argv[1];
-		mode = INPUT;
-	}
-
+	auto cmd = parse(argc, argv);
 	off_t recover_chunk = 0;
 	chunk_info_t sim_repr;
-	if (mode == INPUT || mode == RECOVER) {
-		std::ifstream input{sim_path};
+	if (cmd.mode == INPUT || cmd.mode == RECOVER) {
+		std::ifstream input{cmd.sim_path};
 		if (!input.read(reinterpret_cast<char*>(&sim_repr), sizeof sim_repr)) {
 			return 1;
 		}
-		if (mode == RECOVER) {
+		if (cmd.mode == RECOVER) {
 			input.seekg(0, std::ios_base::end);
 			const size_t size = input.tellg();
 			const auto chunk_size = sim_repr.width * sim_repr.height * chunk_frame_count * host_pixel_size;
@@ -433,7 +467,7 @@ int main(int argc, char **argv)
 			recover_chunk = (size - sizeof sim_repr) / chunk_size - 1;
 			if (recover_chunk <= 0) {
 				recover_chunk = 0;
-				mode = OUTPUT;
+				cmd.mode = OUTPUT;
 			}
 		}
 	}
@@ -442,12 +476,12 @@ int main(int argc, char **argv)
 	GLuint graphics_shdr;
 	GLuint compute_shdr;
 	GLuint script;
-	if (mode == OUTPUT || mode == RECOVER) {
-		const auto sh_text = load_all_shaders("src/vertex.glsl", "src/fragment.glsl", "src/compute.glsl", sc_path);
+	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
+		const auto sh_text = load_all_shaders("src/vertex.glsl", "src/fragment.glsl", "src/compute.glsl", cmd.script_path);
 		graphics_shdr = build_shader(sh_text.quad_vs.data(), sh_text.quad_fs.data());
 		compute_shdr = build_shader(sh_text.sim_cs.data());
 		script = build_shader(sh_text.script.data());
-	} else if (mode == INPUT) {
+	} else if (cmd.mode == INPUT) {
 		const auto sh_text = load_draw_shaders("src/vertex.glsl", "src/fragment.glsl");
 		graphics_shdr = build_shader(sh_text.quad_vs.data(), sh_text.quad_fs.data());
 	}
@@ -455,7 +489,7 @@ int main(int argc, char **argv)
 	const auto quad_va = describe_va();
 	std::jthread io(io_worker, &current_io_work_type);
 
-	if (mode == OUTPUT || mode == RECOVER) {
+	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
 		GLuint scene_state;
 		glCreateBuffers(1, &scene_state);
 		glNamedBufferStorage(scene_state, 8*sizeof(glm::vec4), nullptr, 0);
@@ -488,7 +522,7 @@ int main(int argc, char **argv)
 		const size_t n_frames = sim_repr.frame_count = window_settings.n_frames;
 		sim_repr.ms_per_frame = window_settings.ms_per_frame;
 
-		issue_open((mode == OUTPUT)? io_work_type::open_write: io_work_type::open_recover, sim_path);
+		issue_open((cmd.mode == OUTPUT)? io_work_type::open_write: io_work_type::open_recover, cmd.sim_path);
 		complete_io_request();
 		issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
 		const size_t chunk_pixels = width * height * chunk_frame_count;
@@ -556,7 +590,7 @@ int main(int argc, char **argv)
 
 	if (win) {
 		win.resize(width, height);
-		issue_open(io_work_type::open_read, sim_path);
+		issue_open(io_work_type::open_read, cmd.sim_path);
 		complete_io_request();
 		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
