@@ -402,20 +402,19 @@ int main(int argc, char **argv)
 		const size_t chunk_size = chunk_pixels * host_pixel_size;
 		off_t write_addr = sizeof sim_repr + recover_chunk * chunk_size;
 
-		GLuint sim[2];
-		sim[0] = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
-		sim[1] = texture_array(GL_TEXTURE1, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+		GLuint sim;
+		sim = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
 
 		glProgramUniform1i(compute_shdr, 2 /* skybox */, 2 /* GL_TEXTURE2 */);
 		glProgramUniform1i(graphics_shdr, 0 /* screen0 */, 0);
 		glProgramUniform1i(graphics_shdr, 1 /* screen1 */, 1);
 
-		const GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
-		const GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
+		GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
+		GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
 		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
 		// n_frames should always be a multiple of chunk_frame_count
 		for (size_t i_frame = recover_chunk * chunk_frame_count; win && i_frame < n_frames; ++i_frame) {
-			const GLuint buffer = (i_frame / chunk_frame_count) % 2;
+			// const GLuint buffer = (i_frame / chunk_frame_count) % 2;
 			const GLuint frame_index = i_frame % chunk_frame_count;
 			float progress = smoothstep(float(i_frame) / float(n_frames-1));
 
@@ -424,31 +423,44 @@ int main(int argc, char **argv)
 			glDispatchCompute(1, 1, 1);
 			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-			glUseProgram(compute_shdr);
-			enable_sim_frame(0, sim[buffer], frame_index, GL_R11F_G11F_B10F);
-			glDispatchCompute(compute_width, compute_height, 1);
-			glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+			auto time_ref = clk::now();
+			for (GLint px_base_x = 0; px_base_x < width && win; px_base_x += compute_width * compute_local_dim) {
+				for (GLint px_base_y = 0; px_base_y < width && win; px_base_y += compute_height * compute_local_dim) {
+					glUseProgram(compute_shdr);
+					glUniform2i(3 /* px_base */, px_base_x, px_base_y);
+					enable_sim_frame(0, sim, frame_index, GL_R11F_G11F_B10F);
+					glDispatchCompute(compute_width, compute_height, 1);
+					glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
-			draw_quad(graphics_shdr, quad_va, float(frame_index), float(buffer));
-			win.present();
+					draw_quad(graphics_shdr, quad_va, float(frame_index), float(0.0f));
+					win.present();
+					std::printf("\rframe %zu/%zu:%02zu%%",
+						i_frame+1, n_frames, (100 * (px_base_x * height + px_base_y)) / (width * height));
+					std::fflush(stdout);
+					const auto time_test = clk::now();
+					const auto elapsed = time_test - time_ref;
+					if (elapsed > 100ms && compute_width > 16 && compute_height > 16) {
+						compute_width /= 2;
+						compute_height /= 2;
+					}
+					time_ref = time_test;
+				}
+			}
 
 			if (frame_index == chunk_frame_count-1) {
 				// technically this only needs to wait for the request
 				// that was made for the previous issue with the same
 				// `buffer` index
 				complete_dump();
-				issue_dump(chunk_size, sim[buffer], write_addr, buf.get());
+				issue_dump(chunk_size, sim, write_addr, buf.get());
 				write_addr += chunk_size;
 			}
-
-			std::printf("\rframe #%zu", i_frame);
-			std::fflush(stdout);
 		}
 		std::printf("\r                 \r");
 		// push the last issue
 		complete_dump();
 		issue_io_request(io_work_type::close);
-		glDeleteTextures(2, sim);
+		glDeleteTextures(1, &sim);
 		complete_io_request();
 	}
 

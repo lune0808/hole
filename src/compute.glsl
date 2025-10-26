@@ -7,6 +7,7 @@ layout(std430,binding=1) readonly restrict buffer scene_spec
 	scene_state scene;
 };
 uniform layout(location=2) samplerCube skybox;
+uniform layout(location=3) ivec2 px_base;
 
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
@@ -202,7 +203,7 @@ vec4 color(ivec2 coord)
 
 void main()
 {
-	ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 coord = px_base + ivec2(gl_GlobalInvocationID.xy);
 	imageStore(screen, coord, color(coord));
 }
 
