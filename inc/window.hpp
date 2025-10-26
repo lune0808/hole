@@ -18,7 +18,7 @@ struct glfw_context
 };
 
 static inline void APIENTRY dbg_callback(
-	GLenum source, GLenum type, GLuint, GLenum severity,
+	GLenum source, GLenum type, GLuint id, GLenum severity,
 	GLsizei len, const GLchar *msg, const void *
 )
 {
@@ -85,8 +85,8 @@ static inline void APIENTRY dbg_callback(
 		break;
 	}
 
-	std::fprintf(stderr, "[GL %s(%s)]: %*s\n",
-		stype, sseverity, static_cast<int>(len), msg);
+	std::fprintf(stderr, "[GL %s/%s(%s)] %u: %*s\n",
+		ssource, stype, sseverity, id, static_cast<int>(len), msg);
 }
 
 struct window

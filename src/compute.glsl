@@ -52,14 +52,6 @@ vec3 hsv2rgb(vec3 c)
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
-const float accretion_min = 4.5f;
-const float accretion_max = 35.0f;
-const vec3 accretion_normal = normalize(vec3(0.1, 0.9, -0.1));
-const vec3 X = vec3(1.0, 0.0, 0.0);
-const vec3 accretion_x = normalize(cross(accretion_normal, X));
-const vec3 accretion_z = normalize(cross(accretion_x, accretion_normal));
-const float accretion_height = 3.5;
-
 void integrate_intensity(float r, float phi, float y, inout float i, inout float transmittance, float h)
 {
 	if (r < scene.accr_min_r || r > scene.accr_max_r || abs(y) > scene.accr_height) {
@@ -164,7 +156,7 @@ vec3 trace(vec3 start_ray)
 			transmittance = 0.0;
 			break;
 		}
-		if (r > max(accretion_max * 3.0, 10.0 * scene.sch_radius) && y.y > 0.0) {
+		if (r > max(scene.accr_max_r * 3.0, 10.0 * scene.sch_radius) && y.y > 0.0) {
 			break;
 		}
 		if (transmittance < 1e-4) {

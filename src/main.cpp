@@ -22,12 +22,12 @@ static constexpr size_t chunk_frame_count = 16;
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
 static const float quad[] = {
-	-1.0f, -1.0f,
-	+1.0f, -1.0f,
-	-1.0f, +1.0f,
-	-1.0f, +1.0f,
-	+1.0f, -1.0f,
-	+1.0f, +1.0f,
+	-1.0f, -1.0f, 0.0f, 1.0f,
+	+1.0f, -1.0f, 0.0f, 1.0f,
+	-1.0f, +1.0f, 0.0f, 1.0f,
+	-1.0f, +1.0f, 0.0f, 1.0f,
+	+1.0f, -1.0f, 0.0f, 1.0f,
+	+1.0f, +1.0f, 0.0f, 1.0f,
 };
 
 GLuint describe_va()
@@ -40,7 +40,7 @@ GLuint describe_va()
 	glGenBuffers(1, &vb);
 	glBindBuffer(GL_ARRAY_BUFFER, vb);
 	glBufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
 	glEnableVertexAttribArray(0);
 
 	return va;
