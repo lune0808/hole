@@ -11,13 +11,14 @@
 #include "window.hpp"
 #include "shader.hpp"
 #include "skybox_id.hpp"
+#include "gl_object.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
 using namespace std::chrono_literals;
 
 static constexpr GLuint compute_local_dim = 4;
-static constexpr size_t chunk_frame_count = 4;
+static constexpr size_t chunk_frame_count = 16;
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
 static const float quad[] = {
@@ -490,14 +491,8 @@ int main(int argc, char **argv)
 	std::jthread io(io_worker, &current_io_work_type);
 
 	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
-		GLuint scene_state;
-		glCreateBuffers(1, &scene_state);
-		glNamedBufferStorage(scene_state, 9*sizeof(glm::vec4), nullptr, 0);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, scene_state);
-		GLuint scene_settings;
-		glCreateBuffers(1, &scene_settings);
-		glNamedBufferStorage(scene_settings, (2*4 + 2) * sizeof(glm::vec4), nullptr, 0);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, scene_settings);
+		gl_ssb scene_state{1, 9*sizeof(glm::vec4)};
+		gl_ssb scene_settings{0, (2*4 + 2) * sizeof(glm::vec4)};
 
 		struct {
 			GLint width;
@@ -512,7 +507,7 @@ int main(int argc, char **argv)
 		glDispatchCompute(1, 1, 1);
 		glFinish();
 
-		glGetNamedBufferSubData(scene_settings, 2*4 * sizeof(glm::vec4), sizeof(window_settings), &window_settings);
+		scene_settings.read(&window_settings, 2*4 * sizeof(glm::vec4), sizeof window_settings);
 		assert(window_settings.width > 0 && window_settings.height > 0);
 		win.resize(window_settings.width, window_settings.height);
 		assert(window_settings.skybox_id < std::size(skybox_fmt));
