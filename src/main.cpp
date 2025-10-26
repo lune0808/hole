@@ -12,6 +12,8 @@
 #include "shader.hpp"
 #include "skybox_id.hpp"
 #include "gl_object.hpp"
+#include "timing.hpp"
+#include "io.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
@@ -43,6 +45,7 @@ GLuint describe_va()
 	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
 	glEnableVertexAttribArray(0);
 
+	glBindVertexArray(0);
 	return va;
 }
 
@@ -52,126 +55,14 @@ static float smoothstep(float x)
 	return 3.0f * x * x - 2.0f * x * x * x;
 }
 
-struct chunk_info_t {
+struct file_header_t {
 	std::uint32_t width;
 	std::uint32_t height;
 	std::uint32_t frame_count;
 	std::uint32_t ms_per_frame;
 };
 
-struct io_request
-{
-	void *buf;
-	size_t size;
-	off_t addr;
-};
-
-enum class io_work_type { none = 0, open_read, open_write, open_recover, close, read, write, exit };
-static std::atomic<io_work_type> current_io_work_type;
-static io_request current_io_request;
-
 static GLsync transfer_fence;
-
-static constexpr auto poll_period = 1ms;
-
-using clk = std::chrono::steady_clock;
-using instant_t = std::chrono::time_point<clk>;
-using time_interval = std::chrono::nanoseconds;
-
-void io_worker(std::atomic<io_work_type> *type)
-{
-	std::fstream s;
-	for (;;) {
-		auto t = type->load(std::memory_order_acquire);
-		auto req = current_io_request;
-		auto buf = reinterpret_cast<char*>(req.buf);
-		switch (t) {
-		case io_work_type::none:
-			std::this_thread::sleep_for(poll_period);
-			continue;
-		case io_work_type::open_write:
-			s = std::fstream(buf, std::ios::out | std::ios::binary);
-			break;
-		case io_work_type::open_read:
-			s = std::fstream(buf, std::ios::in  | std::ios::binary);
-			break;
-		case io_work_type::open_recover:
-			s = std::fstream(buf, std::ios::in  | std::ios::out | std::ios::binary);
-			break;
-		case io_work_type::close:
-			s.close();
-			break;
-		case io_work_type::write:
-			assert(s.is_open());
-			if (!(s.seekp(req.addr) && s.write(buf, req.size))) {
-				std::printf("[io error] write\n");
-				std::memset(buf, 'W' /* 0x57 */, req.size);
-			}
-			break;
-		case io_work_type::read:
-			assert(s.is_open());
-			if (!(s.seekg(req.addr) && s.read(buf, req.size))) {
-				std::printf("[io error] read\n");
-				std::memset(buf, 'R' /* 0x52 */, req.size);
-			}
-			break;
-		case io_work_type::exit:
-			std::printf("closing streams...\r");
-			return;
-		}
-		type->store(io_work_type::none, std::memory_order_release);
-	}
-}
-
-bool issue_io_request(io_work_type type,
-	void *buf = nullptr, size_t size = 0, off_t addr = 0, instant_t deadline = instant_t::max())
-{
-	io_request req = io_request{buf, size, addr};
-	// since we only have 1 producer thread, this is fine
-	while (current_io_work_type.load(std::memory_order_relaxed) != io_work_type::none) {
-		if (clk::now() >= deadline) {
-			return false;
-		}
-		std::this_thread::sleep_for(poll_period);
-	}
-	current_io_request = req;
-	current_io_work_type.store(type, std::memory_order_release);
-	return true;
-}
-
-void issue_open(io_work_type type, const char *path)
-{
-	issue_io_request(type, const_cast<char*>(path));
-}
-
-bool io_completed()
-{
-	// we need acquire semantics to see the io operation's result in memory
-	return current_io_work_type.load(std::memory_order_acquire) == io_work_type::none;
-}
-
-bool try_complete_io_request(instant_t deadline)
-{
-	for (;;) {
-		const auto now = clk::now();
-		if (now >= deadline) {
-			return false;
-		} else if (io_completed()) {
-			return true;
-		}
-		std::this_thread::sleep_for(poll_period);
-	}
-}
-
-bool try_complete_io_request(time_interval timeout)
-{
-	return try_complete_io_request(clk::now() + timeout);
-}
-
-void complete_io_request()
-{
-	try_complete_io_request(instant_t::max());
-}
 
 void complete_dump()
 {
@@ -197,30 +88,11 @@ void blocking_load(void *buf, size_t size, off_t addr)
 	complete_io_request();
 }
 
-bool fence_try_wait(GLsync fence, time_interval timeout)
-{
-	const auto status = glClientWaitSync(fence, 0, timeout.count());
-	bool ok = (status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED);
-	return ok;
-}
-
-bool fence_try_wait(GLsync fence, instant_t deadline)
-{
-	return fence_try_wait(fence, deadline - clk::now());
-}
-
-void fence_block(GLsync fence)
-{
-	glFlush();
-	fence_try_wait(fence, time_interval::max());
-}
-
 void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr)
 {
 	glTextureSubImage3D(name, 0, 0, 0, 0, width, height, chunk_frame_count,
 		GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, (void*) device_addr);
-	glDeleteSync(transfer_fence);
-	transfer_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+	transfer_fence = fence_insert(transfer_fence);
 }
 
 // we can't unpack to texture[i+2] while
@@ -235,13 +107,13 @@ void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr
 // when the time comes to draw i+1,
 // this `pipeline` gets reset so it
 // must be flushed prior.
+static constexpr int try_stream_load_reset = 4;
+static constexpr int try_stream_load_nop = 0;
 int try_stream_load(io_request req, GLuint width, GLuint height,
 	GLintptr device_addr, GLuint chunk_name, int suspend, instant_t deadline)
 {
 	// coroutine lol
 	switch (suspend) {
-	case 8:
-		/* fallthrough */
 	case 4:
 		pixel_unpack(chunk_name, width, height, device_addr);
 		/* fallthrough */
@@ -450,11 +322,17 @@ command_line parse(int argc, char **argv)
 	return cl;
 }
 
+char *map_persistent_buffer(GLenum target, GLenum access, size_t size)
+{
+	glBufferStorage(target, size, nullptr, GL_MAP_PERSISTENT_BIT | access);
+	return (char*) glMapBufferRange(target, 0, size, GL_MAP_PERSISTENT_BIT | GL_MAP_UNSYNCHRONIZED_BIT | access);
+}
+
 int main(int argc, char **argv)
 {
 	auto cmd = parse(argc, argv);
 	off_t recover_chunk = 0;
-	chunk_info_t sim_repr;
+	file_header_t sim_repr;
 	if (cmd.mode == INPUT || cmd.mode == RECOVER) {
 		std::ifstream input{cmd.sim_path};
 		if (!input.read(reinterpret_cast<char*>(&sim_repr), sizeof sim_repr)) {
@@ -488,7 +366,7 @@ int main(int argc, char **argv)
 	}
 
 	const auto quad_va = describe_va();
-	std::jthread io(io_worker, &current_io_work_type);
+	std::jthread io(io_worker);
 
 	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
 		gl_ssb scene_state{1, 9*sizeof(glm::vec4)};
@@ -570,6 +448,7 @@ int main(int argc, char **argv)
 		// push the last issue
 		complete_dump();
 		issue_io_request(io_work_type::close);
+		glDeleteTextures(2, sim);
 		complete_io_request();
 	}
 
@@ -589,16 +468,14 @@ int main(int argc, char **argv)
 		complete_io_request();
 		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
-		const size_t chunk_count = n_frames / chunk_frame_count;
+		const off_t chunk_count = n_frames / chunk_frame_count;
 
 		GLuint pixel_transfer;
 		glGenBuffers(1, &pixel_transfer);
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pixel_transfer);
 		// TODO: fix screen tearing
-		GLbitfield pixel_transfer_flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT;
-		glBufferStorage(GL_PIXEL_UNPACK_BUFFER, 2 * chunk_size, nullptr, pixel_transfer_flags);
-		char *streaming_memory = (char*) glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0,
-			2 * chunk_size, pixel_transfer_flags | GL_MAP_UNSYNCHRONIZED_BIT);
+		char *streaming_memory =
+			map_persistent_buffer(GL_PIXEL_UNPACK_BUFFER, GL_MAP_WRITE_BIT, 2 * chunk_size);
 
 		off_t video_file_offset = sizeof sim_repr;
 		assert(n_frames >= 2*chunk_frame_count);
@@ -607,10 +484,11 @@ int main(int argc, char **argv)
 		pixel_unpack(sim[1], width, height, chunk_size);
 		fence_block(transfer_fence);
 		// rreq is made as if it produced the current state
-		blocking_load(streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size);
-		io_request rreq{streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*chunk_size};
+		const auto ichunksize = off_t(chunk_size);
+		blocking_load(streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*ichunksize);
+		io_request rreq{streaming_memory, chunk_size, video_file_offset + (2%chunk_count)*ichunksize};
 
-		int upload_state = 0;
+		auto upload_state = try_stream_load_nop;
 		GLuint prev_chunk = 0;
 		size_t device_addr = chunk_size;
 		const auto start_time = clk::now();
@@ -623,15 +501,16 @@ int main(int argc, char **argv)
 			const GLuint buffer_index = anim_frame % chunk_frame_count;
 			const auto frame_start_time = start_time + (present_frame-1) * frame_time;
 			const auto deadline = frame_start_time + frame_time/2;
+			const auto old = upload_state;
 			upload_state = try_stream_load(rreq, width, height, device_addr,
 				sim[next_buffer], upload_state, deadline);
 			if (chunk != prev_chunk) {
 				const GLuint loading_frame = back_and_forth(
-					present_frame + 2*chunk_frame_count,
+					present_frame + 3*chunk_frame_count-1,
 					n_frames - 1
 				);
 				const GLuint loading_chunk = loading_frame / chunk_frame_count;
-				upload_state = 8;
+				upload_state = try_stream_load_reset;
 				device_addr = next_buffer * chunk_size;
 				rreq.buf = streaming_memory + buffer * chunk_size;
 				rreq.addr = video_file_offset + loading_chunk * chunk_size;
@@ -643,6 +522,8 @@ int main(int argc, char **argv)
 			std::this_thread::sleep_until(start_time + present_frame * frame_time);
 		}
 		issue_io_request(io_work_type::close);
+		glDeleteTextures(2, sim);
+		glDeleteBuffers(1, &pixel_transfer);
 		complete_io_request();
 	}
 
