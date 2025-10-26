@@ -5,18 +5,13 @@ vec4 quat(vec3 axis, float angle)
 	return vec4(sin(0.5 * angle) * axis, cos(0.5 * angle));
 }
 
-vec3 rotate_quat(vec4 q, vec3 v)
-{
-	return v + 2.0 * cross(q.xyz, q.w * v + cross(q.xyz, v));
-}
-
 const float dt = 0.10;
 const uint iterations = 1536;
 
 void init()
 {
-	beg.q_orientation = quat(Z, 0.0);
-	end.q_orientation = quat(Z, 1.0*PI);
+	beg.q_orientation = vec4(Z, 0.0);
+	end.q_orientation = vec4(Z, 1.0*PI);
 
 	beg.cam_pos = +40.0*Z + 10.0*Y;
 	end.cam_pos = +40.0*Z - 10.0*Y;
@@ -59,7 +54,8 @@ void init()
 
 void loop()
 {
-	scene.q_orientation = mix(beg.q_orientation, end.q_orientation, progress);
+	vec4 i = mix(beg.q_orientation, end.q_orientation, progress);
+	scene.q_orientation = normalize(quat(i.xyz, i.w));
 	scene.cam_pos = mix(beg.cam_pos, end.cam_pos, progress);
 	scene.sch_radius = mix(beg.r_s, end.r_s, progress);
 	scene.sphere_pos = mix(beg.sphere_pos, end.sphere_pos, progress);
