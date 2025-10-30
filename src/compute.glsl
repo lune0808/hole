@@ -154,20 +154,25 @@ vec3 trace(vec3 start_ray)
 	} else if (abs(angle_start - angle_crit) < 2.0*da) {
 		return vec3(1.0, 0.0, 1.0);
 	} else if (abs(angle_start) > abs(angle_crit)) {
-		return vec3(0.0);
+		// return vec3(0.0);
 	} else {
-		return vec3(1.0);
+		// return vec3(1.0);
 	}
 
 	float b = r * r * dphi_dt / rho;
 	vec3 y = vec3(r, dr_dt, phi);
 	float light = 0.0;
 	float transmittance = 1.0;
+	float r_limit = scene.sch_radius;
 
 	for (uint iter = 0; iter < scene.iterations; iter++) {
 		y = rk4(y, b, scene.dt);
 		r = y.x;
-		if (transmittance < 1e-4) {
+		if (transmittance < 1e-3) {
+			break;
+		}
+		if (r <= r_limit) {
+			transmittance = 0.0;
 			break;
 		}
 		phi = y.z;
@@ -179,6 +184,10 @@ vec3 trace(vec3 start_ray)
 		float disk_angle = atan(dot(radial, scene.accr_z), dot(radial, scene.accr_x));
 		float ydisk = r * dot(radial, scene.accr_normal);
 		integrate_intensity(r, disk_angle, ydisk, light, transmittance, ds);
+	}
+
+	if (abs(angle_start) > abs(angle_crit)) {
+		transmittance = 0.0;
 	}
 
 	r = y.x;

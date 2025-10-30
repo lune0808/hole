@@ -11,7 +11,7 @@ void init()
 	end.q_orientation = vec4(Y, PI/2.0);
 
 	beg.cam_pos = +64.0*Z;
-	end.cam_pos = +1e-3*Z;
+	end.cam_pos = +5e-2*Z;
 
 	beg.r_s = 2.0;
 	end.r_s = 2.0;
@@ -19,15 +19,15 @@ void init()
 	beg.sphere_pos = 2.0*X;
 	end.sphere_pos = 2.0*X;
 
-	beg.dt = 1.00;
+	beg.dt = 3.00;
 	end.dt = 0.05;
 
-	beg.iterations = 512;
+	beg.iterations = 1024;
 	end.iterations = 4096;
 
 	win.screen_width = 800;
 	win.screen_height = 600;
-	win.n_frames = 256;
+	win.n_frames = 64;
 	win.ms_per_frame = 33;
 	win.skybox_id = SKYBOX_GENERIC;
 	win.fov = PI/3.0;
@@ -51,9 +51,10 @@ void init()
 
 void loop()
 {
-	vec4 i = mix(beg.q_orientation, end.q_orientation, pow(progress, 8.0));
+	float decay = 1.0 - exp2(1.0 + 1.0 / (progress - 1.0));
+	vec4 i = mix(beg.q_orientation, end.q_orientation, pow(progress, 3.0));
 	scene.q_orientation = normalize(quat(i.xyz, i.w));
-	scene.cam_pos = mix(beg.cam_pos, end.cam_pos, progress);
+	scene.cam_pos = mix(beg.cam_pos, end.cam_pos, decay);
 	scene.sch_radius = mix(beg.r_s, end.r_s, progress);
 	scene.sphere_pos = mix(beg.sphere_pos, end.sphere_pos, progress);
 	scene.iterations = uint(mix(beg.iterations, end.iterations, progress));
