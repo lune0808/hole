@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cassert>
 #include <numbers>
-#include <glm/glm.hpp>
 #include "window.hpp"
 #include "shader.hpp"
 #include "skybox_id.hpp"
@@ -369,8 +368,8 @@ int main(int argc, char **argv)
 	std::jthread io(io_worker);
 
 	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
-		gl_ssb scene_state{1, 9*sizeof(glm::vec4)};
-		gl_ssb scene_settings{0, (2*4 + 2) * sizeof(glm::vec4)};
+		gl_ssb scene_state{1, 9*sizeof(float[4])};
+		gl_ssb scene_settings{0, (2*4 + 2) * sizeof(float[4])};
 
 		struct {
 			GLint width;
@@ -385,7 +384,7 @@ int main(int argc, char **argv)
 		glDispatchCompute(1, 1, 1);
 		glFinish();
 
-		scene_settings.read(&window_settings, 2*4 * sizeof(glm::vec4), sizeof window_settings);
+		scene_settings.read(&window_settings, 2*4 * sizeof(float[4]), sizeof window_settings);
 		assert(window_settings.width > 0 && window_settings.height > 0);
 		win.resize(window_settings.width, window_settings.height);
 		assert(window_settings.skybox_id < std::size(skybox_fmt));
