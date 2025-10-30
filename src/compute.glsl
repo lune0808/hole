@@ -11,11 +11,13 @@ uniform layout(location=3) ivec2 px_base;
 
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
-	float rho = 1.0 - scene.sch_radius / r;
+	float rs = scene.sch_radius;
+	float rho = 1.0 - rs / r;
 	float rm2 = 1.0 / (r * r);
 	dphi_dt = b * rm2 * rho;
-	d2r_dt2 = scene.sch_radius * rho * rm2 * (1.0 - b * b * rho * rm2)
-		+ (r * rho - 0.5 * scene.sch_radius) * dphi_dt * dphi_dt;
+	d2r_dt2 = dr_dt * dr_dt * rs * rm2 / rho
+		+ b * b * rho * rho * rho * rm2 / r
+		- 0.5 * rs * b * b * rho * rho * rm2 * rm2;
 }
 
 // y = (r, dr/dt, phi)
@@ -110,15 +112,6 @@ vec3 trace(vec3 start_ray)
 	vec3 start_radial_n = normalize(start_radial);
 	vec3 orbital_axis = normalize(cross(start_radial, ray));
 	float r = length(start_radial);
-	// no matter how you integrate, from an observer,
-	// nothing reaches the event horizon
-	// so we flush photons who are orbiting too close
-	// inside, which also reduces the repetitions we see
-	// in the photon sphere
-	float r_limit = scene.sch_radius + 0e-4;
-	if (r <= r_limit) {
-		return vec3(0.0);
-	}
 	float phi = 0;
 
 	// we know where the ray is going towards,
@@ -144,10 +137,11 @@ vec3 trace(vec3 start_ray)
 		dr_dt = sign(dev_radial) * rho * inversesqrt(1.0 + (looking_at * rho / r) * (looking_at * rho / r));
 		dphi_dt = abs(dr_dt) * looking_at / r;
 	}
+
 	float angle_start = atan(dev_angular, dev_radial);
-	float pi = 3.1415927;
 	float angle_crit = asin(0.5 * scene.sch_radius * sqrt(27.0) / r * sqrt(rho));
 	if (r > 1.5 * scene.sch_radius) {
+		float pi = 3.1415927;
 		angle_crit = pi - angle_crit;
 	}
 	float da = 0.003;
@@ -157,28 +151,22 @@ vec3 trace(vec3 start_ray)
 		return vec3(0.0, 1.0, 0.0);
 	} else if (abs(angle_start - 3.14) < da) {
 		return vec3(0.0, 0.0, 1.0);
+	} else if (abs(angle_start - angle_crit) < 2.0*da) {
+		return vec3(1.0, 0.0, 1.0);
+	} else if (abs(angle_start) > abs(angle_crit)) {
+		return vec3(0.0);
 	} else {
-		if (abs(angle_start - angle_crit) < 2.0*da) {
-			return vec3(1.0, 0.0, 1.0);
-		}
+		return vec3(1.0);
 	}
 
 	float b = r * r * dphi_dt / rho;
 	vec3 y = vec3(r, dr_dt, phi);
 	float light = 0.0;
 	float transmittance = 1.0;
-	float outside = r - scene.sch_radius;
 
 	for (uint iter = 0; iter < scene.iterations; iter++) {
 		y = rk4(y, b, scene.dt);
 		r = y.x;
-		if (r <= r_limit && outside >= 0.0) {
-			transmittance = 0.0;
-			break;
-		}
-		if (r > max(scene.accr_max_r * 3.0, 10.0 * scene.sch_radius) && y.y > 0.0) {
-			break;
-		}
 		if (transmittance < 1e-4) {
 			break;
 		}
@@ -193,10 +181,6 @@ vec3 trace(vec3 start_ray)
 		integrate_intensity(r, disk_angle, ydisk, light, transmittance, ds);
 	}
 
-	float b_limit = scene.sch_radius * sqrt(27.0) * 0.5;
-	if (b < b_limit) {
-		// transmittance = 0.0;
-	}
 	r = y.x;
 	dr_dt = y.y;
 	phi = y.z;
@@ -209,7 +193,6 @@ vec3 trace(vec3 start_ray)
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.05);
 	vec3 emission = light_shift(light);
-	// return vec3(log2(r) / log2(scene.sch_radius) / 1.2);
 	return ambient + transmittance * sky + emission;
 }
 
