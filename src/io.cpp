@@ -1,4 +1,5 @@
 #include <cstring>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cassert>
@@ -15,7 +16,7 @@ static constexpr size_t io_concurrency = 1u;
 static io_uring uring;
 static int fd;
 
-void io_worker()
+void io_init()
 {
 	int status = io_uring_queue_init(io_concurrency, &uring, 0);
 	if (status < 0) {
@@ -25,61 +26,62 @@ void io_worker()
 	fd = 0;
 }
 
-bool issue_io_request(io_work_type type, void *buf,
-	size_t size, off_t addr, instant_t deadline)
+void io_fini()
 {
+	io_uring_queue_exit(&uring);
+}
+
+bool issue_io_request(io_work_type type, void *buf, size_t size, off_t addr)
+{
+	assert(size < std::numeric_limits<int>::max());
+	auto sqe = io_uring_get_sqe(&uring);
 	int status = 0;
-	const char *path = (const char*) buf;
 	switch (type) {
-	case io_work_type::none:
-		break;
-	case io_work_type::open_read:
-		assert(!fd);
-		status = open(path, O_RDONLY);
-		fd = status;
-		break;
-	case io_work_type::open_write:
-		assert(!fd);
-		status = open(path, O_WRONLY|O_TRUNC|O_CREAT);
-		fd = status;
-		break;
-	case io_work_type::open_recover:
-		assert(!fd);
-		status = open(path, O_RDWR);
-		fd = status;
-		break;
-	case io_work_type::close:
-		assert(fd > 0);
-		close(fd);
-#ifndef NDEBUG
-		fd = 0;
-#endif
-		break;
 	case io_work_type::read:
-		io_uring_prep_read(io_uring_get_sqe(&uring), fd, buf, size, addr);
+		io_uring_prep_read(sqe, fd, buf, size, addr);
+		sqe->user_data = size;
 		status = io_uring_submit(&uring);
 		break;
 	case io_work_type::write:
-		io_uring_prep_write(io_uring_get_sqe(&uring), fd, buf, size, addr);
+		io_uring_prep_write(sqe, fd, buf, size, addr);
+		sqe->user_data = size;
 		status = io_uring_submit(&uring);
-		break;
-	case io_work_type::exit:
-		io_uring_queue_exit(&uring);
 		break;
 	}
 	if (status < 0) {
 		std::fprintf(stderr, "[I/O error] %m\n");
 	}
-	(void) deadline;
 	return status >= 0;
 }
 
-bool issue_open(io_work_type type, const char *path)
+void blocking_open_read(const char *path)
 {
-	assert(type == io_work_type::open_read   ||
-	       type == io_work_type::open_write  ||
-	       type == io_work_type::open_recover);
-	return issue_io_request(type, const_cast<char*>(path));
+	assert(!fd);
+	fd = open(path, O_RDONLY);
+	assert(fd > 0);
+}
+
+void blocking_open_trunc(const char *path)
+{
+	assert(!fd);
+	fd = open(path, O_WRONLY|O_TRUNC|O_CREAT);
+	assert(fd > 0);
+}
+
+void blocking_open_recover(const char *path)
+{
+	assert(!fd);
+	fd = open(path, O_RDWR);
+	assert(fd > 0);
+}
+
+void blocking_close()
+{
+	assert(fd > 0);
+	close(fd);
+#ifndef NDEBUG
+	fd = 0;
+#endif
 }
 
 bool io_completed(io_uring_cqe **pcqe)
@@ -95,26 +97,27 @@ static __kernel_timespec duration2timespec(time_interval ti)
 	return ts;
 }
 
-bool try_complete_io_request(io_work_type type, time_interval timeout)
+bool try_complete_io_request(time_interval timeout)
 {
-	if (type != io_work_type::read && type != io_work_type::write) {
-		return true;
-	}
 	io_uring_cqe *cqe;
 	auto ts = duration2timespec(timeout);
 	int status = io_uring_wait_cqe_timeout(&uring, &cqe, &ts);
-	auto status2 = cqe->res;
+	int size = 0;
+	if (status == 0) {
+		status = cqe->res;
+		size = (int) cqe->user_data;
+	}
 	io_uring_cqe_seen(&uring, cqe);
-	return status == 0 && status2 > 0;
+	return status == size;
 }
 
-bool try_complete_io_request(io_work_type type, instant_t deadline)
+bool try_complete_io_request(instant_t deadline)
 {
-	return try_complete_io_request(type, deadline - clk::now());
+	return try_complete_io_request(deadline - clk::now());
 }
 
-void complete_io_request(io_work_type type)
+void complete_io_request()
 {
-	try_complete_io_request(type, instant_t::max());
+	try_complete_io_request(instant_t::max());
 }
 

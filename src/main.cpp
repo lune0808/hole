@@ -65,7 +65,7 @@ static GLsync transfer_fence;
 
 void complete_dump()
 {
-	complete_io_request(io_work_type::write);
+	complete_io_request();
 }
 
 void issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
@@ -76,15 +76,15 @@ void issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
 	issue_io_request(io_work_type::write, buf, size, addr);
 }
 
-bool issue_load(void *buf, size_t size, off_t addr, instant_t deadline = instant_t::max())
+bool issue_load(void *buf, size_t size, off_t addr)
 {
-	return issue_io_request(io_work_type::read, buf, size, addr, deadline);
+	return issue_io_request(io_work_type::read, buf, size, addr);
 }
 
 void blocking_load(void *buf, size_t size, off_t addr)
 {
 	issue_load(buf, size, addr);
-	complete_io_request(io_work_type::read);
+	complete_io_request();
 }
 
 void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr)
@@ -122,12 +122,12 @@ int try_stream_load(io_request req, GLuint width, GLuint height,
 		}
 		/* fallthrough */
 	case 2:
-		if (!issue_load(req.buf, req.size, req.addr, deadline)) {
+		if (!issue_load(req.buf, req.size, req.addr)) {
 			return 2;
 		}
 		/* fallthrough */
 	case 1:
-		if (!try_complete_io_request(io_work_type::read, deadline)) {
+		if (!try_complete_io_request(deadline)) {
 			return 1;
 		}
 		/* fallthrough */
@@ -365,7 +365,7 @@ int main(int argc, char **argv)
 	}
 
 	const auto quad_va = describe_va();
-	io_worker();
+	io_init();
 
 	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
 		gl_ssb scene_state{1, 9*sizeof(float[4])};
@@ -394,9 +394,11 @@ int main(int argc, char **argv)
 		const size_t n_frames = sim_repr.frame_count = window_settings.n_frames;
 		sim_repr.ms_per_frame = window_settings.ms_per_frame;
 
-		const auto open_mode = (cmd.mode == OUTPUT)? io_work_type::open_write: io_work_type::open_recover;
-		issue_open(open_mode, cmd.sim_path);
-		complete_io_request(open_mode);
+		if (cmd.mode == OUTPUT) {
+			blocking_open_trunc(cmd.sim_path);
+		} else {
+			blocking_open_recover(cmd.sim_path);
+		}
 		issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
 		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * host_pixel_size;
@@ -459,9 +461,8 @@ int main(int argc, char **argv)
 		std::printf("\r                 \r");
 		// push the last issue
 		complete_dump();
-		issue_io_request(io_work_type::close);
+		blocking_close();
 		glDeleteTextures(1, &sim);
-		complete_io_request(io_work_type::close);
 	}
 
 	assert(sim_repr.frame_count % chunk_frame_count == 0);
@@ -476,8 +477,7 @@ int main(int argc, char **argv)
 
 	if (win) {
 		win.resize(width, height);
-		issue_open(io_work_type::open_read, cmd.sim_path);
-		complete_io_request(io_work_type::open_read);
+		blocking_open_read(cmd.sim_path);
 		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
 		const off_t chunk_count = n_frames / chunk_frame_count;
@@ -533,12 +533,11 @@ int main(int argc, char **argv)
 			win.present();
 			std::this_thread::sleep_until(start_time + present_frame * frame_time);
 		}
-		issue_io_request(io_work_type::close);
+		blocking_close();
 		glDeleteTextures(2, sim);
 		glDeleteBuffers(1, &pixel_transfer);
-		complete_io_request(io_work_type::close);
 	}
 
-	issue_io_request(io_work_type::exit);
+	io_fini();
 }
 
