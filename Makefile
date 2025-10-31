@@ -1,6 +1,6 @@
 DIR = $(shell find inc -type d)
 BINDIR = $(DIR:inc%=bin%)
-LIBS = glfw3 gl
+LIBS = glfw3 gl liburing
 LIBCPPFLAGS = $(shell pkg-config --cflags $(LIBS))
 LIBLDFLAGS = $(shell pkg-config --libs $(LIBS))
 SAN =

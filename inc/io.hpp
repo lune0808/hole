@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <atomic>
 #include "timing.hpp"
 
 
@@ -27,8 +26,7 @@ void io_worker();
 bool issue_io_request(io_work_type type, void *buf = nullptr,
 	size_t size = 0, off_t addr = 0, instant_t deadline = instant_t::max());
 bool issue_open(io_work_type type, const char *path);
-bool io_completed();
-bool try_complete_io_request(instant_t deadline);
-bool try_complete_io_request(time_interval timeout);
-void complete_io_request();
+bool try_complete_io_request(io_work_type type, instant_t deadline);
+bool try_complete_io_request(io_work_type type, time_interval timeout);
+void complete_io_request(io_work_type type);
 
