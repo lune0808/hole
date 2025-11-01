@@ -71,10 +71,10 @@ void integrate_intensity(float r, float phi, float y, inout float i, inout float
 	float density = in_disk * r_modulate * a * a;
 	float local_light = density * r_modulate / l0;
 	float local_absorbance = density * scene.accr_abso;
-	i += h * transmittance * local_light;
-	transmittance *= exp(h * -local_absorbance);
+	i = max(0.0, i + h * transmittance * local_light);
+	// transmittance *= exp(h * -local_absorbance);
 	// t*exp(x) = t*(1+x+o(x))
-	// transmittance += h * -local_absorbance * transmittance;
+	transmittance += h * -local_absorbance * transmittance;
 }
 
 vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
