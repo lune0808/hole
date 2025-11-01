@@ -1,18 +1,11 @@
-#include <cstdio>
-#include <atomic>
-#include <fstream>
-#include <cstdint>
-#include <cstring>
-#include <thread>
-#include <cstddef>
-#include <cassert>
-#include <numbers>
+#include "std.hpp"
 #include "window.hpp"
 #include "shader.hpp"
 #include "skybox_id.hpp"
 #include "gl_object.hpp"
 #include "timing.hpp"
 #include "io.hpp"
+#include "parse.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb/stb_image.h"
 
@@ -70,15 +63,14 @@ void complete_dump()
 
 void issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
 {
-	// this blocks until packing is done, also the floating point format is converted
-	// ideally we would keep floats and stream the texture using DSA
+	// this blocks until packing is done, ideally we would stream the texture using DSA
 	glGetTextureImage(chunk_name, 0, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, size, buf);
 	issue_io_request(io_work_type::write, buf, size, addr);
 }
 
-bool issue_load(void *buf, size_t size, off_t addr, instant_t deadline = instant_t::max())
+bool issue_load(void *buf, size_t size, off_t addr)
 {
-	return issue_io_request(io_work_type::read, buf, size, addr, deadline);
+	return issue_io_request(io_work_type::read, buf, size, addr);
 }
 
 void blocking_load(void *buf, size_t size, off_t addr)
@@ -122,7 +114,7 @@ int try_stream_load(io_request req, GLuint width, GLuint height,
 		}
 		/* fallthrough */
 	case 2:
-		if (!issue_load(req.buf, req.size, req.addr, deadline)) {
+		if (!issue_load(req.buf, req.size, req.addr)) {
 			return 2;
 		}
 		/* fallthrough */
@@ -215,112 +207,6 @@ GLuint back_and_forth(GLuint index_, GLuint max_value_)
 	return max_value - std::abs(index % (2 * max_value) - max_value);
 }
 
-struct shaders_text_blob
-{
-	using buffer = std::span<char>;
-	std::unique_ptr<char[]> memory;
-	buffer quad_vs;
-	buffer quad_fs;
-	buffer sim_cs;
-	buffer script;
-};
-
-shaders_text_blob load_all_shaders(const char *vs, const char *fs, const char *cs, const char *sc)
-{
-	shaders_text_blob sh;
-	const auto vs_sz = file_size(vs);
-	const auto fs_sz = file_size(fs);
-	const auto cs_sz = file_size(cs); // includes src/shared_data.glsl
-	const auto sc_sz = file_size(sc); // includes src/shared_data.glsl, inc/skybox_id.hpp, src/script_include.glsl
-	static constexpr const char *const shared = "src/shared_data.glsl";
-	const auto shared_sz = file_size(shared);
-	static constexpr const char *const skybox_id = "inc/skybox_id.hpp";
-	const auto skybox_id_sz = file_size(skybox_id);
-	static constexpr const char *const include = "src/script_include.glsl";
-	const auto include_sz = file_size(include);
-	static constexpr const char *const include_main = "src/script_include_main.glsl";
-	const auto include_main_sz = file_size(include_main);
-	sh.memory = std::make_unique<char[]>(
-		+ vs_sz
-		+ fs_sz
-		+ shared_sz + cs_sz
-		+ shared_sz + skybox_id_sz + include_sz + sc_sz + include_main_sz
-	);
-	sh.quad_vs = std::span{sh.memory.get(), vs_sz};
-	sh.quad_fs = std::span{sh.quad_vs.data() + sh.quad_vs.size(), fs_sz};
-	sh.sim_cs = std::span{sh.quad_fs.data() + sh.quad_fs.size(), shared_sz + cs_sz};
-	sh.script = std::span{sh.sim_cs.data() + sh.sim_cs.size(), shared_sz + skybox_id_sz + include_sz + sc_sz + include_main_sz};
-	load_file(vs, sh.quad_vs, '\0');
-	load_file(fs, sh.quad_fs, '\0');
-	load_file(shared, sh.sim_cs.data(), shared_sz, '\n');
-	load_file(cs, sh.sim_cs.data() + shared_sz, cs_sz, '\0');
-	std::memcpy(sh.script.data(), sh.sim_cs.data(), shared_sz);
-	load_file(skybox_id, sh.script.data() + shared_sz, skybox_id_sz, '\n');
-	load_file(include, sh.script.data() + shared_sz + skybox_id_sz, include_sz, '\n');
-	load_file(sc, sh.script.data() + shared_sz + skybox_id_sz + include_sz, sc_sz, '\n');
-	load_file(include_main, sh.script.data() + shared_sz + skybox_id_sz + include_sz + sc_sz, include_main_sz, '\0');
-	return sh;
-}
-
-shaders_text_blob load_draw_shaders(const char *vs, const char *fs)
-{
-	shaders_text_blob sh;
-	const auto vs_sz = file_size(vs);
-	const auto fs_sz = file_size(fs);
-	sh.memory = std::make_unique<char[]>(vs_sz + fs_sz);
-	sh.quad_vs = std::span{sh.memory.get(), vs_sz};
-	sh.quad_fs = std::span{sh.quad_vs.data() + sh.quad_vs.size(), fs_sz};
-	load_file(vs, sh.quad_vs, '\0');
-	load_file(fs, sh.quad_fs, '\0');
-	return sh;
-}
-
-enum cmd_type { OUTPUT, INPUT, RECOVER };
-
-struct command_line {
-	const char *sim_path;
-	const char *script_path;
-	cmd_type mode;
-};
-
-command_line parse(int argc, char **argv)
-{
-	static constexpr const char *const default_sim_path = "/tmp/black_hole_sim_data.rgbf32";
-	command_line cl;
-	if (argc == 3 && std::strcmp(argv[1], "-i") == 0) {
-		cl.mode = INPUT;
-		cl.sim_path = argv[2];
-	} else if (argc == 2) {
-		cl.mode = OUTPUT;
-		cl.sim_path = default_sim_path;
-		cl.script_path = argv[1];
-	} else if (argc == 4) {
-		cl.script_path = argv[1];
-		cl.sim_path = argv[3];
-		if (std::strcmp(argv[2], "-r") == 0) {
-			cl.mode = RECOVER;
-		} else if (std::strcmp(argv[2], "-o") == 0) {
-			cl.mode = OUTPUT;
-		} else {
-			goto usage;
-		}
-	} else if (argc == 6) {
-		if (std::strcmp(argv[2], "-r") != 0 || std::strcmp(argv[4], "-o") != 0) {
-			goto usage;
-		}
-		cl.mode = RECOVER;
-		cl.sim_path = argv[5];
-		cl.script_path = argv[1];
-	} else {
-	usage:
-		std::printf("usage:\n");
-		std::printf("%s <script>.glsl [-r <partial-file>] [-o <output-file>]\n", argv[0]);
-		std::printf("%s -i <input-file>\n", argv[0]);
-		std::exit(1);
-	}
-	return cl;
-}
-
 char *map_persistent_buffer(GLenum target, GLenum access, size_t size)
 {
 	glBufferStorage(target, size, nullptr, GL_MAP_PERSISTENT_BIT | access);
@@ -329,7 +215,7 @@ char *map_persistent_buffer(GLenum target, GLenum access, size_t size)
 
 int main(int argc, char **argv)
 {
-	auto cmd = parse(argc, argv);
+	auto cmd = parse_command_line(argc, argv);
 	off_t recover_chunk = 0;
 	file_header_t sim_repr;
 	if (cmd.mode == INPUT || cmd.mode == RECOVER) {
@@ -365,7 +251,7 @@ int main(int argc, char **argv)
 	}
 
 	const auto quad_va = describe_va();
-	std::jthread io(io_worker);
+	io_init();
 
 	if (cmd.mode == OUTPUT || cmd.mode == RECOVER) {
 		gl_ssb scene_state{1, 9*sizeof(float[4])};
@@ -394,8 +280,11 @@ int main(int argc, char **argv)
 		const size_t n_frames = sim_repr.frame_count = window_settings.n_frames;
 		sim_repr.ms_per_frame = window_settings.ms_per_frame;
 
-		issue_open((cmd.mode == OUTPUT)? io_work_type::open_write: io_work_type::open_recover, cmd.sim_path);
-		complete_io_request();
+		if (cmd.mode == OUTPUT) {
+			blocking_open_trunc(cmd.sim_path);
+		} else {
+			blocking_open_recover(cmd.sim_path);
+		}
 		issue_io_request(io_work_type::write, &sim_repr, sizeof sim_repr, 0);
 		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * host_pixel_size;
@@ -458,9 +347,8 @@ int main(int argc, char **argv)
 		std::printf("\r                 \r");
 		// push the last issue
 		complete_dump();
-		issue_io_request(io_work_type::close);
+		blocking_close();
 		glDeleteTextures(1, &sim);
-		complete_io_request();
 	}
 
 	assert(sim_repr.frame_count % chunk_frame_count == 0);
@@ -475,8 +363,7 @@ int main(int argc, char **argv)
 
 	if (win) {
 		win.resize(width, height);
-		issue_open(io_work_type::open_read, cmd.sim_path);
-		complete_io_request();
+		blocking_open_read(cmd.sim_path);
 		const size_t chunk_pixels = width * height * chunk_frame_count;
 		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
 		const off_t chunk_count = n_frames / chunk_frame_count;
@@ -532,12 +419,11 @@ int main(int argc, char **argv)
 			win.present();
 			std::this_thread::sleep_until(start_time + present_frame * frame_time);
 		}
-		issue_io_request(io_work_type::close);
+		blocking_close();
 		glDeleteTextures(2, sim);
 		glDeleteBuffers(1, &pixel_transfer);
-		complete_io_request();
 	}
 
-	issue_io_request(io_work_type::exit);
+	io_fini();
 }
 

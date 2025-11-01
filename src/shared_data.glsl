@@ -29,6 +29,7 @@ struct scene_state {
 	float green_exponent;
 
 	float blue_exponent;
+	bool accr_hide;
 };
 
 #define PI 3.1415927

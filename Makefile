@@ -1,6 +1,6 @@
 DIR = $(shell find inc -type d)
 BINDIR = $(DIR:inc%=bin%)
-LIBS = glfw3 gl
+LIBS = glfw3 gl liburing
 LIBCPPFLAGS = $(shell pkg-config --cflags $(LIBS))
 LIBLDFLAGS = $(shell pkg-config --libs $(LIBS))
 SAN =
@@ -9,7 +9,7 @@ DEBUG = -ggdb3
 OPT ?=
 CFLAGS = $(SAN) $(DEBUG) $(OPT)
 CXXFLAGS = -std=c++20 $(SAN) $(DEBUG) $(OPT)
-LDFLAGS = $(SAN) $(LIBLDFLAGS) -lm -lrt
+LDFLAGS = $(SAN) $(LIBLDFLAGS) -lm
 
 CC = gcc
 CXX = g++

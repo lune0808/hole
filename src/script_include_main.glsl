@@ -3,6 +3,7 @@
 void main()
 {
 	if (progress == -1.0) {
+		scene.accr_hide = false;
 		init();
 	} else {
 		scene.inv_screen_width = 1.0 / float(win.screen_width);

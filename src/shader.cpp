@@ -1,7 +1,4 @@
-#include <cassert>
-#include <fstream>
-#include <cstdlib>
-#include <cstdio>
+#include "std.hpp"
 #include "shader.hpp"
 
 
@@ -71,14 +68,15 @@ size_t file_size(const char *path)
 	return size_t(file.tellg()) + 1u /* for terminator */;
 }
 
-void load_file(const char *path, char *buf, size_t size, char terminator)
+size_t load_file(const char *path, char *buf, size_t size, char terminator)
 {
 	std::ifstream file(path);
 	file.read(buf, size - 1);
 	buf[size - 1] = terminator;
+	return size;
 }
 
-void load_file(const char *path, std::span<char> buf, char terminator)
+size_t load_file(const char *path, std::span<char> buf, char terminator)
 {
-	load_file(path, buf.data(), buf.size(), terminator);
+	return load_file(path, buf.data(), buf.size(), terminator);
 }
