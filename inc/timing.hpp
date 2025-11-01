@@ -1,6 +1,6 @@
 #pragma once
 
-#include <chrono>
+#include "std.hpp"
 #include <glad/gl.h>
 
 

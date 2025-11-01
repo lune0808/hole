@@ -1,7 +1,4 @@
-#include <cassert>
-#include <fstream>
-#include <cstdlib>
-#include <cstdio>
+#include "std.hpp"
 #include "shader.hpp"
 
 

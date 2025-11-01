@@ -1,12 +1,5 @@
-#include <cstring>
-#include <limits>
-#include <cstdio>
-#include <cstdlib>
-#include <cassert>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/fcntl.h>
-#include "liburing.h"
+#include "std.hpp"
+#include "libs.hpp"
 #include "io.hpp"
 
 

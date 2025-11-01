@@ -1,7 +1,7 @@
 #pragma once
 
-#include <glad/gl.h>
-#include <span>
+#include "std.hpp"
+#include "libs.hpp"
 
 GLuint compile_shader(const char *src, GLenum kind);
 GLuint build_shader(const char *vert_src, const char *frag_src);

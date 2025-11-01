@@ -1,12 +1,4 @@
-#include <cstdio>
-#include <atomic>
-#include <fstream>
-#include <thread>
-#include <cstdint>
-#include <cstring>
-#include <cstddef>
-#include <cassert>
-#include <numbers>
+#include "std.hpp"
 #include "window.hpp"
 #include "shader.hpp"
 #include "skybox_id.hpp"

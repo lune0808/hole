@@ -1,7 +1,7 @@
 #pragma once
 
-#include <glad/gl.h>
-#include <cstddef>
+#include "std.hpp"
+#include "libs.hpp"
 
 struct gl_ssb
 {
