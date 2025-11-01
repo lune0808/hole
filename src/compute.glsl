@@ -11,11 +11,11 @@ uniform layout(location=3) ivec2 px_base;
 
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
 {
-	float rho = 1.0 - scene.sch_radius / r;
+	float rs = scene.sch_radius;
+	float rho = 1.0 - rs / r;
 	float rm2 = 1.0f / (r * r);
 	dphi_dt = b * rm2 * rho;
-	d2r_dt2 = scene.sch_radius * rho * rm2 * (1.0 - b * b * rho * rm2)
-		+ (r * rho - 0.5 * scene.sch_radius) * dphi_dt * dphi_dt;
+	d2r_dt2 = rho * rm2 * (rs + b * b * rho / r * (1.0 - 2.5 * rs / r));
 }
 
 // y = (r, dr/dt, phi)
