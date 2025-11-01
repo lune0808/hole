@@ -327,7 +327,7 @@ int main(int argc, char **argv)
 					std::fflush(stdout);
 					const auto time_test = clk::now();
 					const auto elapsed = time_test - time_ref;
-					if (elapsed > 100ms && compute_width > 16 && compute_height > 16) {
+					if (elapsed > 1s && compute_width > 16 && compute_height > 16) {
 						compute_width /= 2;
 						compute_height /= 2;
 					}
