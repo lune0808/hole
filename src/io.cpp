@@ -57,7 +57,7 @@ void blocking_open_read(const char *path)
 void blocking_open_trunc(const char *path)
 {
 	assert(!fd);
-	fd = open(path, O_WRONLY|O_TRUNC|O_CREAT);
+	fd = open(path, O_WRONLY|O_TRUNC|O_CREAT, S_IRUSR|S_IWUSR);
 	assert(fd > 0);
 }
 
