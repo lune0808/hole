@@ -131,7 +131,7 @@ vec3 trace(vec3 start_ray)
 	float dr_dt;
 	// compute dr/dphi or dphi/dr whichever doesn't blow up
 	// we call beta the angle between `radial` and `ray`
-	float sin_beta = dev_angular * inversesqrt(dev_angular * dev_angular + dev_radial * dev_radial);
+	float sin_beta = inversesqrt(1.0 + dev_radial * dev_radial / (dev_angular * dev_angular));
 	if (sin_beta > 0.707) {
 		float cot_beta = dev_radial / dev_angular;
 		float is = inversesqrt(rho + cot_beta * cot_beta);
