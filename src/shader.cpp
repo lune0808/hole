@@ -71,6 +71,10 @@ size_t file_size(const char *path)
 size_t load_file(const char *path, char *buf, size_t size, char terminator)
 {
 	std::ifstream file(path);
+	if (size > (1ul << 20)) {
+		std::fprintf(stderr, "tried to load '%s' (%zuMiB) as shader code.\n", path, size >> 20);
+		std::exit(1);
+	}
 	file.read(buf, size - 1);
 	buf[size - 1] = terminator;
 	return size;
