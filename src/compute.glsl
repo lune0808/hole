@@ -13,7 +13,7 @@ void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_d
 {
 	float rs = scene.sch_radius;
 	float rho = 1.0 - rs / r;
-	float rm2 = 1.0f / (r * r);
+	float rm2 = 1.0 / (r * r);
 	dphi_dt = b * rm2 * rho;
 	d2r_dt2 = rho * rm2 * (rs + b * b * rho / r * (1.0 - 2.5 * rs / r));
 }
@@ -128,7 +128,6 @@ vec3 trace(vec3 start_ray)
 	float rs = scene.sch_radius;
 	float rho = 1.0 - rs / r;
 	float b;
-	float dphi_dt;
 	float dr_dt;
 	// compute dr/dphi or dphi/dr whichever doesn't blow up
 	// we call beta the angle between `radial` and `ray`
@@ -137,13 +136,11 @@ vec3 trace(vec3 start_ray)
 		float cot_beta = dev_radial / dev_angular;
 		float is = inversesqrt(rho + cot_beta * cot_beta);
 		b = r * is;
-		dphi_dt = is / r * rho;
-		dr_dt = r * dphi_dt * cot_beta;
+		dr_dt = is * rho * cot_beta;
 	} else {
 		float tan_beta = dev_angular / dev_radial;
 		float tis = abs(tan_beta) * inversesqrt(1.0 + rho * tan_beta * tan_beta);
 		b = r * tis;
-		dphi_dt = tis / r * rho;
 		dr_dt = sign(dev_radial) * rho * sqrt(1.0 - tan_beta * tan_beta
 			* rho / (1.0 + rho * tan_beta * tan_beta));
 	}
@@ -187,6 +184,7 @@ vec3 trace(vec3 start_ray)
 	vec3 end_radial  = rotate_axis(orbital_axis, phi, start_radial_n);
 	vec3 end_angular = cross(orbital_axis, end_radial);
 	pos = scene.sphere_pos + r * end_radial;
+	float dphi_dt;
 	float d2r_dt2;
 	ray_accel(r, b, dr_dt, dphi_dt, d2r_dt2);
 	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
