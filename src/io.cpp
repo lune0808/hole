@@ -95,13 +95,13 @@ bool try_complete_io_request(time_interval timeout)
 	io_uring_cqe *cqe;
 	auto ts = duration2timespec(timeout);
 	int status = io_uring_wait_cqe_timeout(&uring, &cqe, &ts);
-	int size = 0;
+	int expected = 0;
 	if (status == 0) {
 		status = cqe->res;
-		size = (int) cqe->user_data;
+		expected = (int) cqe->user_data;
+		io_uring_cqe_seen(&uring, cqe);
 	}
-	io_uring_cqe_seen(&uring, cqe);
-	return status == size;
+	return status == expected;
 }
 
 bool try_complete_io_request(instant_t deadline)
