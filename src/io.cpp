@@ -100,6 +100,7 @@ bool try_complete_io_request(time_interval timeout)
 		status = cqe->res;
 		expected = (int) cqe->user_data;
 		io_uring_cqe_seen(&uring, cqe);
+		assert(status == expected);
 	}
 	return status == expected;
 }
