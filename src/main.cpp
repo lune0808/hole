@@ -11,7 +11,7 @@
 
 using namespace std::chrono_literals;
 
-static constexpr GLuint compute_local_dim = 4;
+static constexpr GLuint compute_local_dim = 8;
 static constexpr size_t chunk_frame_count = 16;
 static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
 
