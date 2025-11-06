@@ -4,7 +4,6 @@
 
 
 using namespace std::chrono_literals;
-static constexpr auto poll_period = 1ms;
 static constexpr size_t io_concurrency = 1u;
 static io_uring uring;
 static int fd;

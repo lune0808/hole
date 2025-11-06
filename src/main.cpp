@@ -1,3 +1,4 @@
+#include <immintrin.h>
 #include "std.hpp"
 #include "window.hpp"
 #include "shader.hpp"
@@ -79,11 +80,15 @@ void blocking_load(void *buf, size_t size, off_t addr)
 	complete_io_request();
 }
 
-void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr)
+void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr, instant_t deadline = instant_t::max())
 {
+	// NOTE: a pixel buffer is bound so this is asynchronous
 	glTextureSubImage3D(name, 0, 0, 0, 0, width, height, chunk_frame_count,
 		GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, (void*) device_addr);
-	transfer_fence = fence_insert(transfer_fence);
+	// transfer_fence = fence_insert(transfer_fence);
+	glDeleteSync(transfer_fence);
+	// FIXME: this call randomly takes up 40ms and blows frametimes
+	transfer_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 }
 
 // we can't unpack to texture[i+2] while
@@ -106,7 +111,7 @@ int try_stream_load(io_request req, GLuint width, GLuint height,
 	// coroutine lol
 	switch (suspend) {
 	case 4:
-		pixel_unpack(chunk_name, width, height, device_addr);
+		pixel_unpack(chunk_name, width, height, device_addr, deadline);
 		/* fallthrough */
 	case 3:
 		if (!fence_try_wait(transfer_fence, deadline)) {
@@ -392,6 +397,7 @@ int main(int argc, char **argv)
 		const auto start_time = clk::now();
 		const std::chrono::milliseconds frame_time{sim_repr.ms_per_frame};
 		for (GLuint present_frame = 0; win; ++present_frame) {
+			float a = (float) glfwGetTime();
 			const GLuint anim_frame = back_and_forth(present_frame, n_frames - 1);
 			const GLuint chunk = anim_frame / chunk_frame_count;
 			const GLuint buffer = chunk % 2;
@@ -399,7 +405,6 @@ int main(int argc, char **argv)
 			const GLuint buffer_index = anim_frame % chunk_frame_count;
 			const auto frame_start_time = start_time + (present_frame-1) * frame_time;
 			const auto deadline = frame_start_time + frame_time/2;
-			const auto old = upload_state;
 			upload_state = try_stream_load(rreq, width, height, device_addr,
 				sim[next_buffer], upload_state, deadline);
 			if (chunk != prev_chunk) {
@@ -415,9 +420,18 @@ int main(int argc, char **argv)
 				prev_chunk = chunk;
 			}
 
+			const auto present_time = start_time + present_frame * frame_time;
+			auto now = clk::now();
+			while (now < present_time - poll_period * 3) {
+				std::this_thread::sleep_for(poll_period);
+				now = clk::now();
+			}
+			while (now < present_time) {
+				_mm_pause();
+				now = clk::now();
+			}
 			draw_quad(graphics_shdr, quad_va, float(buffer_index), float(buffer));
 			win.present();
-			std::this_thread::sleep_until(start_time + present_frame * frame_time);
 		}
 		blocking_close();
 		glDeleteTextures(2, sim);

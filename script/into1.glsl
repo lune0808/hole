@@ -25,8 +25,8 @@ void init()
 	beg.iterations = 512;
 	end.iterations = 2048;
 
-	win.screen_width = 1280;
-	win.screen_height = 720;
+	win.screen_width = 1920-160;
+	win.screen_height = 1080-90;
 	win.n_frames = 256;
 	win.ms_per_frame = 25;
 	win.skybox_id = SKYBOX_GENERIC;
