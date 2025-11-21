@@ -14,7 +14,7 @@ using namespace std::chrono_literals;
 
 static constexpr GLuint compute_local_dim = 8;
 static constexpr size_t chunk_frame_count = 16;
-static constexpr size_t host_pixel_size = sizeof(std::uint32_t);
+static constexpr size_t host_pixel_size = 4 * 16 /* bits */ / 8 /* bits per byte */;
 
 static const float quad[] = {
 	-1.0f, -1.0f, 0.0f, 1.0f,
@@ -49,10 +49,15 @@ static float smoothstep(float x)
 }
 
 struct file_header_t {
-	std::uint32_t width;
+	std::uint16_t width;
+	std::uint16_t tex_id;
 	std::uint32_t height;
 	std::uint32_t frame_count;
 	std::uint32_t ms_per_frame;
+	float rexp;
+	float gexp;
+	float bexp;
+	std::uint32_t __padding;
 };
 
 static GLsync transfer_fence;
@@ -65,7 +70,7 @@ void complete_dump()
 void issue_dump(size_t size, GLuint chunk_name, off_t addr, void *buf)
 {
 	// this blocks until packing is done, ideally we would stream the texture using DSA
-	glGetTextureImage(chunk_name, 0, GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, size, buf);
+	glGetTextureImage(chunk_name, 0, GL_RGBA, GL_HALF_FLOAT, size, buf);
 	issue_io_request(io_work_type::write, buf, size, addr);
 }
 
@@ -84,7 +89,7 @@ void pixel_unpack(GLuint name, GLuint width, GLuint height, GLintptr device_addr
 {
 	// NOTE: a pixel buffer is bound so this is asynchronous
 	glTextureSubImage3D(name, 0, 0, 0, 0, width, height, chunk_frame_count,
-		GL_RGB, GL_UNSIGNED_INT_10F_11F_11F_REV, (void*) device_addr);
+		GL_RGBA, GL_HALF_FLOAT, (void*) device_addr);
 	// transfer_fence = fence_insert(transfer_fence);
 	glDeleteSync(transfer_fence);
 	// FIXME: this call randomly takes up 40ms and blows frametimes
@@ -270,19 +275,25 @@ int main(int argc, char **argv)
 			GLuint skybox_id;
 			float fov;
 		} window_settings;
+		float exponents[3];
 		glUseProgram(script);
 		glUniform1f(2 /* progress */, -1.0f);
 		glDispatchCompute(1, 1, 1);
 		glFinish();
 
 		scene_settings.read(&window_settings, 2*4 * sizeof(float[4]), sizeof window_settings);
+		scene_state.read(exponents, 7*sizeof(float[4]) + 2*sizeof(float), sizeof exponents);
 		assert(window_settings.width > 0 && window_settings.height > 0);
 		win.resize(window_settings.width, window_settings.height);
 		assert(window_settings.skybox_id < std::size(skybox_fmt));
-		const GLuint skybox = load_skybox(GL_TEXTURE2, skybox_fmt[window_settings.skybox_id]);
 		const size_t width = sim_repr.width = window_settings.width;
 		const size_t height = sim_repr.height = window_settings.height;
 		const size_t n_frames = sim_repr.frame_count = window_settings.n_frames;
+		const std::uint32_t tex_id = sim_repr.tex_id = window_settings.skybox_id;
+		sim_repr.rexp = exponents[0];
+		sim_repr.gexp = exponents[1];
+		sim_repr.bexp = exponents[2];
+		const GLuint skybox = load_skybox(GL_TEXTURE2, skybox_fmt[tex_id]);
 		sim_repr.ms_per_frame = window_settings.ms_per_frame;
 
 		if (cmd.mode == OUTPUT) {
@@ -296,15 +307,17 @@ int main(int argc, char **argv)
 		off_t write_addr = sizeof sim_repr + recover_chunk * chunk_size;
 
 		GLuint sim;
-		sim = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+		sim = texture_array(GL_TEXTURE0, GL_RGBA16_SNORM, width, height, chunk_frame_count);
 
 		glProgramUniform1i(compute_shdr, 2 /* skybox */, 2 /* GL_TEXTURE2 */);
+		glProgramUniform1i(graphics_shdr, 4 /* skybox */, 2 /* GL_TEXTURE2 */);
+		glProgramUniform3f(graphics_shdr, 5, sim_repr.rexp, sim_repr.gexp, sim_repr.bexp);
 		glProgramUniform1i(graphics_shdr, 0 /* screen0 */, 0);
 		glProgramUniform1i(graphics_shdr, 1 /* screen1 */, 1);
 
 		GLuint compute_width = (width + compute_local_dim - 1) / compute_local_dim;
 		GLuint compute_height = (height + compute_local_dim - 1) / compute_local_dim;
-		auto buf = std::make_unique<std::uint32_t[]>(chunk_pixels);
+		auto buf = std::make_unique<std::uint16_t[][4]>(chunk_pixels);
 		// n_frames should always be a multiple of chunk_frame_count
 		for (size_t i_frame = recover_chunk * chunk_frame_count; win && i_frame < n_frames; ++i_frame) {
 			// const GLuint buffer = (i_frame / chunk_frame_count) % 2;
@@ -321,7 +334,7 @@ int main(int argc, char **argv)
 				for (GLint px_base_y = 0; px_base_y < width && win; px_base_y += compute_height * compute_local_dim) {
 					glUseProgram(compute_shdr);
 					glUniform2i(3 /* px_base */, px_base_x, px_base_y);
-					enable_sim_frame(0, sim, frame_index, GL_R11F_G11F_B10F);
+					enable_sim_frame(0, sim, frame_index, GL_RGBA16_SNORM);
 					glDispatchCompute(compute_width, compute_height, 1);
 					glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
@@ -363,15 +376,19 @@ int main(int argc, char **argv)
 	const auto height = sim_repr.height;
 	const auto n_frames = sim_repr.frame_count;
 	GLuint sim[2];
-	sim[0] = texture_array(GL_TEXTURE0, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
-	sim[1] = texture_array(GL_TEXTURE1, GL_R11F_G11F_B10F, width, height, chunk_frame_count);
+	sim[0] = texture_array(GL_TEXTURE0, GL_RGBA16_SNORM, width, height, chunk_frame_count);
+	sim[1] = texture_array(GL_TEXTURE1, GL_RGBA16_SNORM, width, height, chunk_frame_count);
 
 	if (win) {
 		win.resize(width, height);
 		blocking_open_read(cmd.sim_path);
 		const size_t chunk_pixels = width * height * chunk_frame_count;
-		const size_t chunk_size = chunk_pixels * sizeof(std::uint32_t);
+		const size_t chunk_size = chunk_pixels * host_pixel_size;
 		const off_t chunk_count = n_frames / chunk_frame_count;
+
+		const GLuint skybox = load_skybox(GL_TEXTURE2, skybox_fmt[sim_repr.tex_id]);
+		glProgramUniform1i(graphics_shdr, 4 /* skybox */, 2 /* GL_TEXTURE2 */);
+		glProgramUniform3f(graphics_shdr, 5, sim_repr.rexp, sim_repr.gexp, sim_repr.bexp);
 
 		GLuint pixel_transfer;
 		glGenBuffers(1, &pixel_transfer);

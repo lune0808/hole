@@ -1,7 +1,7 @@
 // include src/shared_data.glsl
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-uniform layout(binding=0,r11f_g11f_b10f) writeonly restrict image2D screen;
+uniform layout(binding=0,rgba16_snorm) writeonly restrict image2D screen;
 layout(std430,binding=1) readonly restrict buffer scene_spec
 {
 	scene_state scene;
@@ -95,7 +95,7 @@ vec3 light_shift(float intensity)
 	return vec3(r, g, b);
 }
 
-vec3 trace(vec3 start_ray)
+vec4 trace(vec3 start_ray)
 {
 	vec3 ray = start_ray;
 	vec3 pos = scene.cam_pos;
@@ -112,7 +112,7 @@ vec3 trace(vec3 start_ray)
 	float rs = scene.sch_radius;
 	float r_limit = rs * (1.0 + 1e-4);
 	if (r <= r_limit) {
-		return vec3(0.0);
+		return vec4(0.0);
 	}
 	float phi = 0;
 
@@ -189,7 +189,13 @@ vec3 trace(vec3 start_ray)
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.05);
 	vec3 emission = light_shift(light);
-	return ambient + transmittance * sky + emission;
+	ray = normalize(ray);
+	if (floatBitsToInt(ray.z) < 0) {
+		return vec4(ray.xy, -transmittance, light);
+	} else {
+		return vec4(ray.xy, +transmittance, light);
+	}
+	// return ambient + transmittance * sky + emission;
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
@@ -201,7 +207,7 @@ vec4 color(ivec2 coord)
 {
 	vec2 pixel = vec2(coord.x * scene.inv_screen_width - 0.5, coord.y * scene.inv_screen_width - 0.5);
 	vec3 start_ray = normalize(rotate_quat(scene.q_orientation, vec3(pixel, -scene.focal_length)));
-	return vec4(trace(start_ray), 1.0);
+	return trace(start_ray);
 }
 
 void main()

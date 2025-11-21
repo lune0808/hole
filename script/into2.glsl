@@ -24,7 +24,7 @@ void init()
 
 	win.screen_width = 240;
 	win.screen_height = 240;
-	win.n_frames = 512;
+	win.n_frames = 64;
 	win.ms_per_frame = 100;
 	win.skybox_id = SKYBOX_GENERIC;
 	win.fov = PI/3.0;
