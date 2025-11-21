@@ -6,7 +6,6 @@ layout(std430,binding=1) readonly restrict buffer scene_spec
 {
 	scene_state scene;
 };
-uniform layout(location=2) samplerCube skybox;
 uniform layout(location=3) ivec2 px_base;
 
 void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_dt2)
@@ -85,14 +84,6 @@ vec3 rodrigues_formula(vec3 axis, float sina, float cosa, vec3 v)
 vec3 rotate_axis(vec3 axis, float angle, vec3 v)
 {
 	return rodrigues_formula(axis, sin(angle), cos(angle), v);
-}
-
-vec3 light_shift(float intensity)
-{
-	float r = pow(intensity, scene.red_exponent);
-	float g = pow(intensity, scene.green_exponent);
-	float b = pow(intensity, scene.blue_exponent);
-	return vec3(r, g, b);
 }
 
 vec4 trace(vec3 start_ray)
@@ -185,17 +176,12 @@ vec4 trace(vec3 start_ray)
 	float dphi_dt;
 	float d2r_dt2;
 	ray_accel(r, b, dr_dt, dphi_dt, d2r_dt2);
-	ray = dr_dt * end_radial + r * dphi_dt * end_angular;
-	vec3 sky = texture(skybox, ray).rgb;
-	vec3 ambient = vec3(0.05);
-	vec3 emission = light_shift(light);
-	ray = normalize(ray);
+	ray = normalize(dr_dt * end_radial + r * dphi_dt * end_angular);
 	if (floatBitsToInt(ray.z) < 0) {
 		return vec4(ray.xy, -transmittance, light);
 	} else {
 		return vec4(ray.xy, +transmittance, light);
 	}
-	// return ambient + transmittance * sky + emission;
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)

@@ -309,7 +309,6 @@ int main(int argc, char **argv)
 		GLuint sim;
 		sim = texture_array(GL_TEXTURE0, GL_RGBA16_SNORM, width, height, chunk_frame_count);
 
-		glProgramUniform1i(compute_shdr, 2 /* skybox */, 2 /* GL_TEXTURE2 */);
 		glProgramUniform1i(graphics_shdr, 4 /* skybox */, 2 /* GL_TEXTURE2 */);
 		glProgramUniform3f(graphics_shdr, 5, sim_repr.rexp, sim_repr.gexp, sim_repr.bexp);
 		glProgramUniform1i(graphics_shdr, 0 /* screen0 */, 0);
