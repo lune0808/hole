@@ -55,20 +55,20 @@ vec3 hsv2rgb(vec3 c)
 
 void integrate_intensity(float r, float phi, float y, inout float i, inout float transmittance, float h)
 {
-	if (r < scene.accr_min_r || r > scene.accr_max_r || abs(y) > scene.accr_height) {
-		return;
-	}
 	const float r0 = -1.0 * scene.accr_min_r;
 	const float y0 = scene.accr_height / ((scene.accr_max_r - r0) * (scene.accr_max_r - r0));
 	float y_bound = y0 * (r - r0) * (r - r0);
 	float y_modulate = 1.0 - smoothstep(0.0, y_bound*y_bound, y*y);
-	const float two_pi = 6.2831853;
-	// i = mod(phi, two_pi) / two_pi;
 	float r_modulate = 1.0 - smoothstep(scene.accr_min_r, scene.accr_max_r, r);
 	float in_disk = y_modulate * r_modulate;
 	float l0 = scene.accr_light * (1.0 - scene.accr_min_r * scene.accr_light2 / r);
 	float a = 1.0;
 	float density = in_disk * r_modulate * a * a;
+	if (r < scene.accr_min_r || r > scene.accr_max_r || abs(y) > scene.accr_height) {
+		r_modulate = 0.0;
+		density = 0.0;
+		in_disk = 0.0;
+	}
 	float local_light = density * r_modulate / l0;
 	float local_absorbance = density * scene.accr_abso;
 	i = max(0.0, i + h * transmittance * local_light);
@@ -154,11 +154,6 @@ vec3 trace(vec3 start_ray)
 		r = y.x;
 		if (r <= r_limit) {
 			transmittance = 0.0;
-		}
-		if (r > max(scene.accr_max_r * 3.0, 10.0 * rs) && y.y > 0.0) {
-			break;
-		}
-		if (transmittance < 1e-3) {
 			break;
 		}
 		phi = y.z;
@@ -194,8 +189,7 @@ vec3 trace(vec3 start_ray)
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.05);
 	vec3 emission = light_shift(light);
-	float loops = phi;
-	return ambient + loops * (transmittance * sky + emission);
+	return ambient + transmittance * sky + emission;
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
