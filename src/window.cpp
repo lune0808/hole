@@ -3,6 +3,7 @@
 
 glfw_context::glfw_context()
 {
+	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
 	glfwInit();
 }
 

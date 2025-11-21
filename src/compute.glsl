@@ -15,7 +15,7 @@ void ray_accel(float r, float b, float dr_dt, out float dphi_dt, out float d2r_d
 	float rho = 1.0 - rs / r;
 	float rm2 = 1.0 / (r * r);
 	dphi_dt = b * rm2 * rho;
-	d2r_dt2 = rho * rm2 * (rs + b * b * rho / r * (1.0 - 2.5 * rs / r));
+	d2r_dt2 = rho * rm2 * (rs * dr_dt * dr_dt + rho * b * b / r * (rho - rs * 0.5 / r));
 }
 
 // y = (r, dr/dt, phi)
@@ -110,7 +110,7 @@ vec3 trace(vec3 start_ray)
 	// inside, which also reduces the repetitions we see
 	// in the photon sphere
 	float rs = scene.sch_radius;
-	float r_limit = rs * 1.005;
+	float r_limit = rs * (1.0 + 1e-4);
 	if (r <= r_limit) {
 		return vec3(0.0);
 	}
@@ -178,7 +178,7 @@ vec3 trace(vec3 start_ray)
 	bool less_beta = (abs(sin_beta) <= sin_beta_crit);
 	if ((r0 >= 1.5 * rs && less_beta && dev_radial <= 0.0)
 	 || (r0 < 1.5 * rs && !(less_beta && dev_radial > 0.0))) {
-		transmittance = 0.0;
+		// transmittance = 0.0;
 	}
 
 	r = y.x;
@@ -194,7 +194,8 @@ vec3 trace(vec3 start_ray)
 	vec3 sky = texture(skybox, ray).rgb;
 	vec3 ambient = vec3(0.05);
 	vec3 emission = light_shift(light);
-	return ambient + transmittance * sky + emission;
+	float loops = phi;
+	return ambient + loops * (transmittance * sky + emission);
 }
 
 vec3 rotate_quat(vec4 q, vec3 v)
