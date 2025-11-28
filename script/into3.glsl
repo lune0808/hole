@@ -7,8 +7,11 @@ vec4 quat(vec3 axis, float angle)
 
 void init()
 {
-	beg.q_orientation = quat(X, +PI/2.0);
-	end.q_orientation = quat(X, -PI/2.0);
+	beg.q_orientation = vec4(Y, 0.0);
+	end.q_orientation = vec4(Y, +PI/2.0);
+
+	beg.cam_pos = -1e-0*X - 2.0*X;
+	end.cam_pos = -1e-3*X - 2.0*X;
 
 	beg.r_s = 2.0;
 	end.r_s = 2.0;
@@ -16,20 +19,20 @@ void init()
 	beg.sphere_pos = 0.0*X;
 	end.sphere_pos = 0.0*X;
 
-	beg.dt = 0.030;
-	end.dt = 0.050;
+	beg.dt = 0.050;
+	end.dt = 0.100;
 
-	beg.iterations = 4096;
+	beg.iterations = 2048;
 	end.iterations = 32768;
 
 	win.screen_width = 1600;
 	win.screen_height = 900;
-	win.n_frames = 512;
-	win.ms_per_frame = 20;
+	win.n_frames = 256;
+	win.ms_per_frame = 40;
 	win.skybox_id = SKYBOX_GENERIC;
 	win.fov = PI/2.5;
 
-	vec3 accr_y = normalize(vec3(3.0, 5.0, -2.0));
+	vec3 accr_y = normalize(vec3(8.0, 4.0, -2.0));
 	vec3 accr_x = normalize(cross(accr_y, X));
 	scene.accr_normal = accr_y;
 	scene.accr_x = accr_x;
@@ -37,24 +40,30 @@ void init()
 	scene.accr_min_r = 4.5;
 	scene.accr_max_r = 40.0;
 	scene.accr_height = 32.0;
-	scene.accr_light = 64.0;
+	scene.accr_light = 80.0;
 	scene.accr_light2 = 0.90;
 	scene.accr_abso = 0.08;
 
-	scene.red_exponent = 1.0;
-	scene.green_exponent = 8.0;
-	scene.blue_exponent = 7.0;
+	scene.red_exponent = 2.0;
+	scene.green_exponent = 4.0;
+	scene.blue_exponent = 3.0;
+}
+
+vec4 quat_mul(vec4 a, vec4 b)
+{
+	vec3 va = a.xyz;
+	vec3 vb = b.xyz;
+	return vec4(a.w*vb + b.w*va + cross(va, vb), a.w*b.w - dot(va, vb));
 }
 
 void loop()
 {
 	float p = mix(0.0, 1.0, progress);
-	float a = +PI/2.0 - p*PI*4.2;
-	scene.q_orientation = quat(X, a + PI/12.0);
-	// scene.cam_pos = mix(beg.cam_pos, end.cam_pos, p);
-	float s = sin(a);
-	float c = cos(a);
-	scene.cam_pos = mix(2.10, 2.010, p) * vec3(0.0, s, -c);
+	scene.q_orientation = normalize(quat_mul(
+		quat_mul(quat(Z, -PI/8.0), quat(Y, PI/8.0)),
+		quat(Y, mix(beg.q_orientation.w, end.q_orientation.w, pow(p, 0.2)))
+	));
+	scene.cam_pos = mix(beg.cam_pos, end.cam_pos, pow(p, 0.03));
 	scene.sch_radius = mix(beg.r_s, end.r_s, p);
 	scene.sphere_pos = mix(beg.sphere_pos, end.sphere_pos, p);
 	scene.iterations = uint(mix(beg.iterations, end.iterations, p));

@@ -1,4 +1,6 @@
 #include <immintrin.h>
+#include <ctime>
+#include <cstdio>
 #include "std.hpp"
 #include "window.hpp"
 #include "shader.hpp"
@@ -172,7 +174,7 @@ GLuint load_skybox(GLenum unit, const char *path_fmt)
 	glGenTextures(1, &tex);
 	glActiveTexture(unit);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
-	const char *replacement[6] = { "right", "left", "top", "bottom", "front", "back" };
+	const char *replacement[6] = { "px", "nx", "py", "ny", "pz", "nz" };
 	static constexpr size_t bufsize = 128;
 	char buf[bufsize];
 	for (size_t face = 0; face < std::size(replacement); ++face) {
@@ -221,6 +223,23 @@ char *map_persistent_buffer(GLenum target, GLenum access, size_t size)
 {
 	glBufferStorage(target, size, nullptr, GL_MAP_PERSISTENT_BIT | access);
 	return (char*) glMapBufferRange(target, 0, size, GL_MAP_PERSISTENT_BIT | GL_MAP_UNSYNCHRONIZED_BIT | access);
+}
+
+bool global_pause = false;
+
+void key_callback(GLFWwindow *, int key, int, int action, int)
+{
+	if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+		global_pause ^= true;
+	}
+}
+
+void handle_input(window *win)
+{
+	while (global_pause) {
+		_mm_pause();
+		glfwPollEvents();
+	}
 }
 
 int main(int argc, char **argv)
@@ -385,6 +404,7 @@ int main(int argc, char **argv)
 		const size_t chunk_size = chunk_pixels * host_pixel_size;
 		const off_t chunk_count = n_frames / chunk_frame_count;
 
+		assert(sim_repr.tex_id < std::size(skybox_fmt));
 		const GLuint skybox = load_skybox(GL_TEXTURE2, skybox_fmt[sim_repr.tex_id]);
 		glProgramUniform1i(graphics_shdr, 4 /* skybox */, 2 /* GL_TEXTURE2 */);
 		glProgramUniform3f(graphics_shdr, 5, sim_repr.rexp, sim_repr.gexp, sim_repr.bexp);
@@ -412,7 +432,9 @@ int main(int argc, char **argv)
 		size_t device_addr = chunk_size;
 		const auto start_time = clk::now();
 		const std::chrono::milliseconds frame_time{sim_repr.ms_per_frame};
+		glfwSetKeyCallback(win.handle, key_callback);
 		for (GLuint present_frame = 0; win; ++present_frame) {
+			handle_input(&win);
 			float a = (float) glfwGetTime();
 			const GLuint anim_frame = back_and_forth(present_frame, n_frames - 1);
 			const GLuint chunk = anim_frame / chunk_frame_count;
